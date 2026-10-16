@@ -9,6 +9,10 @@ import cloudflare from "@astrojs/cloudflare";
 export default defineConfig({
 	site: "https://example.com",
 	integrations: [mdx(), sitemap()],
+	security: {
+		// Rejects cross-site form posts to the portal (CSRF protection).
+		checkOrigin: true,
+	},
 	adapter: cloudflare({
 		platformProxy: {
 			enabled: true,

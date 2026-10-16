@@ -1,0 +1,50 @@
+---
+import Portal from "../../layouts/Portal.astro";
+import { attemptLogin, createSession } from "../../lib/auth";
+import { audit, safeNext } from "../../lib/portal";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const next = safeNext(Astro.url.searchParams.get("next"));
+if (Astro.locals.user) return Astro.redirect(next);
+
+const userCount = await DB.prepare("SELECT COUNT(*) AS n FROM users").first<number>("n");
+if (userCount === 0) return Astro.redirect("/portal/setup");
+
+let error = "";
+let email = "";
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	email = String(form.get("email") ?? "").trim().toLowerCase();
+	const password = String(form.get("password") ?? "");
+	const result = await attemptLogin(DB, email, password);
+	if ("userId" in result) {
+		await createSession(DB, Astro.cookies, Astro.url, result.userId);
+		await audit(DB, result.userId, "login").run();
+		return Astro.redirect(next);
+	}
+	error =
+		result.error === "locked"
+			? "Çok fazla hatalı deneme. Lütfen 15 dakika sonra tekrar deneyin."
+			: "E-posta veya şifre hatalı.";
+}
+---
+
+<Portal title="Giriş" bare error={error}>
+	<div class="panel">
+		<h2>Giriş yap</h2>
+		<form method="post" class="stack">
+			<label>
+				E-posta
+				<input type="email" name="email" value={email} required autocomplete="username" autofocus />
+			</label>
+			<label>
+				Şifre
+				<input type="password" name="password" required autocomplete="current-password" />
+			</label>
+			<button type="submit" class="btn">Giriş</button>
+		</form>
+		<p class="hint">Hesabınız yoksa veya şifrenizi unuttuysanız Prodinox ile iletişime geçin.</p>
+	</div>
+</Portal>

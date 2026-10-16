@@ -1,0 +1,206 @@
+---
+import Portal from "../../../../layouts/Portal.astro";
+import { destroyUserSessions, hashPassword, passwordProblem, type SessionUser } from "../../../../lib/auth";
+import { audit, parseId } from "../../../../lib/portal";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const admin = Astro.locals.user!;
+const userId = parseId(Astro.params.id);
+const user = userId
+	? await DB.prepare(
+			"SELECT id, email, name, company, role, active, locked_until FROM users WHERE id = ?",
+		)
+			.bind(userId)
+			.first<SessionUser & { active: number; locked_until: number | null }>()
+	: null;
+if (!user) return Astro.redirect("/portal/admin");
+const here = `/portal/admin/users/${user.id}`;
+const isSelf = user.id === admin.id;
+
+let error = "";
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const action = form.get("action");
+
+	if (action === "update") {
+		const name = String(form.get("name") ?? "").trim();
+		const company = String(form.get("company") ?? "").trim();
+		const email = String(form.get("email") ?? "").trim().toLowerCase();
+		const role = form.get("role") === "admin" ? "admin" : "customer";
+		const active = form.get("active") === "1" ? 1 : 0;
+		if (!name || !email) return Astro.redirect(`${here}?err=invalid`);
+		if (isSelf && (role !== "admin" || !active)) return Astro.redirect(`${here}?err=self`);
+		const clash = await DB.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?")
+			.bind(email, user.id)
+			.first();
+		if (clash) return Astro.redirect(`${here}?err=exists`);
+		await DB.batch([
+			DB.prepare(
+				"UPDATE users SET name = ?, company = ?, email = ?, role = ?, active = ?, failed_logins = 0, locked_until = NULL WHERE id = ?",
+			).bind(name, company, email, role, active, user.id),
+			audit(DB, admin.id, "user_update", email),
+		]);
+		if (!active) await destroyUserSessions(DB, user.id);
+		return Astro.redirect(`${here}?ok=saved`);
+	}
+
+	if (action === "password") {
+		const password = String(form.get("password") ?? "");
+		error = passwordProblem(password) ?? "";
+		if (!error) {
+			await DB.batch([
+				DB.prepare(
+					"UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?",
+				).bind(await hashPassword(password), user.id),
+				audit(DB, admin.id, "password_reset", user.email),
+			]);
+			if (!isSelf) await destroyUserSessions(DB, user.id);
+			return Astro.redirect(`${here}?ok=password`);
+		}
+	}
+
+	if (action === "permissions") {
+		const read = new Set(form.getAll("read").map(String));
+		const upload = new Set(form.getAll("upload").map(String));
+		const folderIds = [...new Set([...read, ...upload])].map(parseId).filter((n) => n !== null);
+		await DB.batch([
+			DB.prepare("DELETE FROM permissions WHERE user_id = ?").bind(user.id),
+			...folderIds.map((fid) =>
+				DB.prepare(
+					`INSERT INTO permissions (user_id, folder_id, can_read, can_upload)
+					 SELECT ?, id, ?, ? FROM folders WHERE id = ?`,
+				).bind(user.id, read.has(String(fid)) ? 1 : 0, upload.has(String(fid)) ? 1 : 0, fid),
+			),
+			audit(DB, admin.id, "permissions", user.email),
+		]);
+		return Astro.redirect(`${here}?ok=saved`);
+	}
+
+	if (action === "delete") {
+		if (isSelf) return Astro.redirect(`${here}?err=self`);
+		await DB.batch([
+			DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
+			audit(DB, admin.id, "user_delete", user.email),
+		]);
+		return Astro.redirect("/portal/admin?ok=deleted");
+	}
+}
+
+const { results: folders } = await DB.prepare(
+	`SELECT f.id, f.name, COALESCE(p.can_read, 0) AS can_read, COALESCE(p.can_upload, 0) AS can_upload
+	 FROM folders f LEFT JOIN permissions p ON p.folder_id = f.id AND p.user_id = ?
+	 ORDER BY f.name COLLATE NOCASE`,
+)
+	.bind(user.id)
+	.all<{ id: number; name: string; can_read: number; can_upload: number }>();
+const locked = user.locked_until !== null && user.locked_until > Math.floor(Date.now() / 1000);
+---
+
+<Portal title={user.name} error={error}>
+	<div class="page-head">
+		<div>
+			<div class="breadcrumb"><a href="/portal/admin">Yönetim</a> / Kullanıcılar /</div>
+			<h1>
+				{user.name}
+				{!user.active && <span class="badge red">Pasif</span>}
+				{locked && <span class="badge red">Kilitli</span>}
+			</h1>
+			<p class="muted">{user.email}</p>
+		</div>
+	</div>
+
+	<div class="grid-2">
+		<div class="panel">
+			<h2>Bilgiler</h2>
+			<form method="post" class="stack">
+				<input type="hidden" name="action" value="update" />
+				<label>Ad Soyad <input type="text" name="name" value={user.name} required /></label>
+				<label>Şirket <input type="text" name="company" value={user.company} /></label>
+				<label>E-posta <input type="email" name="email" value={user.email} required /></label>
+				<label>
+					Rol
+					<select name="role">
+						<option value="customer" selected={user.role === "customer"}>Müşteri</option>
+						<option value="admin" selected={user.role === "admin"}>Yönetici</option>
+					</select>
+				</label>
+				<label class="check">
+					<input type="checkbox" name="active" value="1" checked={user.active === 1} /> Hesap aktif
+				</label>
+				<div><button type="submit" class="btn">Kaydet</button></div>
+				{locked && <p class="hint">Kaydetmek hesap kilidini de kaldırır.</p>}
+			</form>
+		</div>
+
+		<div class="panel">
+			<h2>Şifre sıfırla</h2>
+			<form method="post" class="stack">
+				<input type="hidden" name="action" value="password" />
+				<label>
+					Yeni şifre
+					<input type="text" name="password" required minlength="10" autocomplete="off" />
+					<span class="hint">Kullanıcının tüm oturumları kapatılır.</span>
+				</label>
+				<div><button type="submit" class="btn">Şifreyi değiştir</button></div>
+			</form>
+		</div>
+	</div>
+
+	<div class="panel">
+		<h2>Klasör izinleri</h2>
+		{
+			user.role === "admin" ? (
+				<p class="muted">Yöneticiler tüm klasörlere tam erişime sahiptir.</p>
+			) : folders.length === 0 ? (
+				<p class="muted">
+					Önce <a href="/portal/admin">yönetim sayfasından</a> bir klasör oluşturun.
+				</p>
+			) : (
+				<form method="post">
+					<input type="hidden" name="action" value="permissions" />
+					<div class="table-wrap">
+						<table>
+							<thead>
+								<tr>
+									<th>Klasör</th>
+									<th class="center">Görüntüle / indir</th>
+									<th class="center">Yükle</th>
+								</tr>
+							</thead>
+							<tbody>
+								{folders.map((f) => (
+									<tr>
+										<td>{f.name}</td>
+										<td class="center">
+											<input type="checkbox" name="read" value={f.id} checked={f.can_read === 1} aria-label={`${f.name} görüntüle`} />
+										</td>
+										<td class="center">
+											<input type="checkbox" name="upload" value={f.id} checked={f.can_upload === 1} aria-label={`${f.name} yükle`} />
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+					<p class="hint">Sadece "Yükle" izni olan kullanıcılar klasörde yalnızca kendi yükledikleri dosyaları görür.</p>
+					<button type="submit" class="btn">İzinleri kaydet</button>
+				</form>
+			)
+		}
+	</div>
+
+	{
+		!isSelf && (
+			<div class="panel danger-zone">
+				<h2>Kullanıcıyı sil</h2>
+				<form method="post" onsubmit="return confirm('Bu kullanıcı kalıcı olarak silinsin mi?')">
+					<input type="hidden" name="action" value="delete" />
+					<p class="hint">Kullanıcının yüklediği dosyalar silinmez.</p>
+					<button type="submit" class="btn danger">Kullanıcıyı sil</button>
+				</form>
+			</div>
+		)
+	}
+</Portal>

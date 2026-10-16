@@ -1,0 +1,168 @@
+---
+import Portal from "../../../layouts/Portal.astro";
+import {
+	INLINE_TYPES,
+	MAX_UPLOAD_BYTES,
+	audit,
+	cleanFileName,
+	formatBytes,
+	formatDate,
+	getFolderAccess,
+	parseId,
+	type FileRow,
+} from "../../../lib/portal";
+
+export const prerender = false;
+
+const { DB, FILES } = Astro.locals.runtime.env;
+const user = Astro.locals.user!;
+const folderId = parseId(Astro.params.id);
+const access = folderId ? await getFolderAccess(DB, user, folderId) : null;
+if (!access) return Astro.redirect("/portal?err=forbidden");
+const { folder, canRead, canUpload } = access;
+const isAdmin = user.role === "admin";
+const here = `/portal/folders/${folder.id}`;
+
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const action = form.get("action");
+
+	if (action === "upload") {
+		if (!canUpload) return Astro.redirect(`${here}?err=forbidden`);
+		const files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+		if (files.length === 0) return Astro.redirect(`${here}?err=nofile`);
+		const total = files.reduce((sum, f) => sum + f.size, 0);
+		if (total > MAX_UPLOAD_BYTES) return Astro.redirect(`${here}?err=toolarge`);
+
+		for (const file of files) {
+			const name = cleanFileName(file.name);
+			const contentType = file.type || "application/octet-stream";
+			const key = `folders/${folder.id}/${crypto.randomUUID()}`;
+			await FILES.put(key, file, {
+				httpMetadata: { contentType },
+				customMetadata: { name, uploadedBy: String(user.id) },
+			});
+			await DB.batch([
+				DB.prepare(
+					`INSERT INTO files (folder_id, r2_key, name, size, content_type, uploaded_by)
+					 VALUES (?, ?, ?, ?, ?, ?)`,
+				).bind(folder.id, key, name, file.size, contentType, user.id),
+				audit(DB, user.id, "upload", `${folder.name} / ${name}`),
+			]);
+		}
+		return Astro.redirect(`${here}?ok=uploaded`);
+	}
+
+	if (action === "delete") {
+		const fileId = parseId(String(form.get("file_id")));
+		const file = fileId
+			? await DB.prepare("SELECT * FROM files WHERE id = ? AND folder_id = ?")
+					.bind(fileId, folder.id)
+					.first<FileRow>()
+			: null;
+		// Admins can delete anything; customers only their own uploads.
+		if (!file || !(isAdmin || (canUpload && file.uploaded_by === user.id))) {
+			return Astro.redirect(`${here}?err=forbidden`);
+		}
+		await FILES.delete(file.r2_key);
+		await DB.batch([
+			DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id),
+			audit(DB, user.id, "delete", `${folder.name} / ${file.name}`),
+		]);
+		return Astro.redirect(`${here}?ok=deleted`);
+	}
+}
+
+// Upload-only users see just the files they uploaded themselves.
+const { results: files } = await DB.prepare(
+	`SELECT f.*, u.name AS uploader
+	 FROM files f LEFT JOIN users u ON u.id = f.uploaded_by
+	 WHERE f.folder_id = ? ${canRead ? "" : "AND f.uploaded_by = ?"}
+	 ORDER BY f.created_at DESC, f.id DESC`,
+)
+	.bind(...(canRead ? [folder.id] : [folder.id, user.id]))
+	.all<FileRow & { uploader: string | null }>();
+---
+
+<Portal title={folder.name}>
+	<div class="page-head">
+		<div>
+			<div class="breadcrumb"><a href="/portal">Dosyalar</a> /</div>
+			<h1>{folder.name}</h1>
+			{folder.description && <p class="muted">{folder.description}</p>}
+		</div>
+		{isAdmin && <a class="btn secondary" href={`/portal/admin/folders/${folder.id}`}>Klasör ayarları</a>}
+	</div>
+
+	{
+		canUpload && (
+			<div class="panel">
+				<h2>Dosya yükle</h2>
+				<form method="post" enctype="multipart/form-data" class="stack">
+					<input type="hidden" name="action" value="upload" />
+					<input type="file" name="files" multiple required />
+					<div>
+						<button type="submit" class="btn">Yükle</button>
+						<span class="hint">
+							&nbsp;Tek seferde toplam en fazla {Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.
+						</span>
+					</div>
+				</form>
+			</div>
+		)
+	}
+
+	<div class="panel">
+		<h2>{canRead ? "Dosyalar" : "Yüklediğiniz dosyalar"}</h2>
+		{
+			files.length === 0 ? (
+				<p class="empty">Bu klasörde henüz dosya yok.</p>
+			) : (
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>Ad</th>
+								<th>Boyut</th>
+								<th>Yükleyen</th>
+								<th>Tarih</th>
+								<th />
+							</tr>
+						</thead>
+						<tbody>
+							{files.map((f) => (
+								<tr>
+									<td>
+										<a href={`/portal/files/${f.id}`}>{f.name}</a>
+									</td>
+									<td>{formatBytes(f.size)}</td>
+									<td>{f.uploader ?? "—"}</td>
+									<td>{formatDate(f.created_at)}</td>
+									<td class="actions">
+										{INLINE_TYPES.has(f.content_type) && (
+											<a class="btn small secondary" href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener">
+												Görüntüle
+											</a>
+										)}{" "}
+										<a class="btn small secondary" href={`/portal/files/${f.id}`}>
+											İndir
+										</a>{" "}
+										{(isAdmin || (canUpload && f.uploaded_by === user.id)) && (
+											<form method="post" onsubmit="return confirm('Bu dosya silinsin mi?')">
+												<input type="hidden" name="action" value="delete" />
+												<input type="hidden" name="file_id" value={f.id} />
+												<button type="submit" class="btn small danger">
+													Sil
+												</button>
+											</form>
+										)}
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)
+		}
+	</div>
+</Portal>

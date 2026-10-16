@@ -1,0 +1,212 @@
+---
+import Portal from "../../../layouts/Portal.astro";
+import { hashPassword, passwordProblem } from "../../../lib/auth";
+import { audit, formatDate } from "../../../lib/portal";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const admin = Astro.locals.user!;
+
+let error = "";
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const action = form.get("action");
+
+	if (action === "create_user") {
+		const email = String(form.get("email") ?? "").trim().toLowerCase();
+		const name = String(form.get("name") ?? "").trim();
+		const company = String(form.get("company") ?? "").trim();
+		const role = form.get("role") === "admin" ? "admin" : "customer";
+		const password = String(form.get("password") ?? "");
+		error = !email || !name ? "E-posta ve ad zorunludur." : (passwordProblem(password) ?? "");
+		if (!error) {
+			const exists = await DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
+			if (exists) return Astro.redirect("/portal/admin?err=exists");
+			const { meta } = await DB.prepare(
+				"INSERT INTO users (email, name, company, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+			)
+				.bind(email, name, company, await hashPassword(password), role)
+				.run();
+			await audit(DB, admin.id, "user_create", email).run();
+			return Astro.redirect(`/portal/admin/users/${meta.last_row_id}?ok=created`);
+		}
+	}
+
+	if (action === "create_folder") {
+		const name = String(form.get("name") ?? "").trim();
+		const description = String(form.get("description") ?? "").trim();
+		if (!name) return Astro.redirect("/portal/admin?err=invalid");
+		const { meta } = await DB.prepare("INSERT INTO folders (name, description) VALUES (?, ?)")
+			.bind(name, description)
+			.run();
+		await audit(DB, admin.id, "folder_create", name).run();
+		return Astro.redirect(`/portal/admin/folders/${meta.last_row_id}?ok=created`);
+	}
+}
+
+const [users, folders, activity] = await DB.batch<any>([
+	DB.prepare(
+		`SELECT u.id, u.email, u.name, u.company, u.role, u.active, u.locked_until,
+		        (SELECT COUNT(*) FROM permissions p WHERE p.user_id = u.id AND (p.can_read = 1 OR p.can_upload = 1)) AS folder_count
+		 FROM users u ORDER BY u.role, u.company COLLATE NOCASE, u.name COLLATE NOCASE`,
+	),
+	DB.prepare(
+		`SELECT f.id, f.name, f.description,
+		        (SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS file_count,
+		        (SELECT COUNT(*) FROM permissions p WHERE p.folder_id = f.id AND (p.can_read = 1 OR p.can_upload = 1)) AS user_count
+		 FROM folders f ORDER BY f.name COLLATE NOCASE`,
+	),
+	DB.prepare(
+		`SELECT a.action, a.detail, a.created_at, u.name, u.email
+		 FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+		 ORDER BY a.id DESC LIMIT 50`,
+	),
+]);
+
+const ACTIONS: Record<string, string> = {
+	login: "Giriş",
+	setup: "Kurulum",
+	upload: "Yükleme",
+	download: "İndirme",
+	delete: "Dosya silme",
+	password_change: "Şifre değişikliği",
+	password_reset: "Şifre sıfırlama",
+	user_create: "Kullanıcı oluşturma",
+	user_update: "Kullanıcı güncelleme",
+	user_delete: "Kullanıcı silme",
+	folder_create: "Klasör oluşturma",
+	folder_update: "Klasör güncelleme",
+	folder_delete: "Klasör silme",
+	permissions: "İzin değişikliği",
+};
+const now = Math.floor(Date.now() / 1000);
+---
+
+<Portal title="Yönetim" error={error}>
+	<div class="page-head">
+		<div>
+			<h1>Yönetim</h1>
+			<p class="muted">Müşteri hesaplarını, klasörleri ve erişim izinlerini yönetin.</p>
+		</div>
+	</div>
+
+	<div class="grid-2">
+		<div class="panel">
+			<h2>Yeni kullanıcı</h2>
+			<form method="post" class="stack">
+				<input type="hidden" name="action" value="create_user" />
+				<label>Ad Soyad <input type="text" name="name" required /></label>
+				<label>Şirket <input type="text" name="company" /></label>
+				<label>E-posta <input type="email" name="email" required autocomplete="off" /></label>
+				<label>
+					Geçici şifre
+					<input type="text" name="password" required minlength="10" autocomplete="off" />
+					<span class="hint">En az 10 karakter. Kullanıcıya iletin; "Hesabım" sayfasından değiştirebilir.</span>
+				</label>
+				<label>
+					Rol
+					<select name="role">
+						<option value="customer">Müşteri</option>
+						<option value="admin">Yönetici (tüm klasörlere tam erişim)</option>
+					</select>
+				</label>
+				<div><button type="submit" class="btn">Kullanıcı oluştur</button></div>
+			</form>
+		</div>
+
+		<div class="panel">
+			<h2>Yeni klasör</h2>
+			<form method="post" class="stack">
+				<input type="hidden" name="action" value="create_folder" />
+				<label>Klasör adı <input type="text" name="name" required placeholder="Örn. ACME Ltd. – Teknik Çizimler" /></label>
+				<label>Açıklama <textarea name="description" rows="3"></textarea></label>
+				<div><button type="submit" class="btn">Klasör oluştur</button></div>
+			</form>
+		</div>
+	</div>
+
+	<div class="panel">
+		<h2>Kullanıcılar ({users.results.length})</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr><th>Ad</th><th>Şirket</th><th>E-posta</th><th>Rol</th><th>Klasör</th><th /></tr>
+				</thead>
+				<tbody>
+					{
+						users.results.map((u: any) => (
+							<tr>
+								<td>
+									{u.name}{" "}
+									{!u.active && <span class="badge red">Pasif</span>}
+									{u.locked_until > now && <span class="badge red">Kilitli</span>}
+								</td>
+								<td>{u.company}</td>
+								<td>{u.email}</td>
+								<td>{u.role === "admin" ? <span class="badge">Yönetici</span> : <span class="badge gray">Müşteri</span>}</td>
+								<td>{u.role === "admin" ? "Tümü" : u.folder_count}</td>
+								<td class="actions"><a class="btn small secondary" href={`/portal/admin/users/${u.id}`}>Düzenle</a></td>
+							</tr>
+						))
+					}
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<div class="panel">
+		<h2>Klasörler ({folders.results.length})</h2>
+		{
+			folders.results.length === 0 ? (
+				<p class="empty">Henüz klasör yok.</p>
+			) : (
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr><th>Ad</th><th>Açıklama</th><th>Dosya</th><th>Müşteri</th><th /></tr>
+						</thead>
+						<tbody>
+							{folders.results.map((f: any) => (
+								<tr>
+									<td><a href={`/portal/folders/${f.id}`}>{f.name}</a></td>
+									<td class="muted">{f.description}</td>
+									<td>{f.file_count}</td>
+									<td>{f.user_count}</td>
+									<td class="actions"><a class="btn small secondary" href={`/portal/admin/folders/${f.id}`}>Ayarlar</a></td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)
+		}
+	</div>
+
+	<div class="panel">
+		<h2>Son etkinlikler</h2>
+		{
+			activity.results.length === 0 ? (
+				<p class="empty">Henüz etkinlik yok.</p>
+			) : (
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr><th>Tarih</th><th>Kullanıcı</th><th>İşlem</th><th>Detay</th></tr>
+						</thead>
+						<tbody>
+							{activity.results.map((a: any) => (
+								<tr>
+									<td>{formatDate(a.created_at)}</td>
+									<td>{a.name ?? "(silinmiş)"}</td>
+									<td>{ACTIONS[a.action] ?? a.action}</td>
+									<td class="muted">{a.detail}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)
+		}
+	</div>
+</Portal>

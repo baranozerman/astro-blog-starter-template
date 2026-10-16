@@ -1,0 +1,73 @@
+---
+import Portal from "../../layouts/Portal.astro";
+import {
+	SESSION_COOKIE,
+	destroyUserSessions,
+	hashPassword,
+	passwordProblem,
+	verifyPassword,
+} from "../../lib/auth";
+import { audit } from "../../lib/portal";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const user = Astro.locals.user!;
+
+let error = "";
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const current = String(form.get("current") ?? "");
+	const password = String(form.get("password") ?? "");
+	const confirm = String(form.get("confirm") ?? "");
+
+	const stored = await DB.prepare("SELECT password_hash FROM users WHERE id = ?")
+		.bind(user.id)
+		.first<string>("password_hash");
+	if (!stored || !(await verifyPassword(current, stored))) error = "Mevcut şifre hatalı.";
+	else if (password !== confirm) error = "Yeni şifreler eşleşmiyor.";
+	else error = passwordProblem(password) ?? "";
+
+	if (!error) {
+		await DB.batch([
+			DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(
+				await hashPassword(password),
+				user.id,
+			),
+			audit(DB, user.id, "password_change"),
+		]);
+		await destroyUserSessions(DB, user.id, Astro.cookies.get(SESSION_COOKIE)?.value);
+		return Astro.redirect("/portal/account?ok=password");
+	}
+}
+---
+
+<Portal title="Hesabım" error={error}>
+	<div class="page-head">
+		<div>
+			<h1>Hesabım</h1>
+			<p class="muted">{user.name} · {user.email}{user.company && ` · ${user.company}`}</p>
+		</div>
+	</div>
+	<div class="grid-2">
+		<div class="panel">
+			<h2>Şifre değiştir</h2>
+			<form method="post" class="stack">
+				<label>
+					Mevcut şifre
+					<input type="password" name="current" required autocomplete="current-password" />
+				</label>
+				<label>
+					Yeni şifre
+					<input type="password" name="password" required minlength="10" autocomplete="new-password" />
+					<span class="hint">En az 10 karakter.</span>
+				</label>
+				<label>
+					Yeni şifre (tekrar)
+					<input type="password" name="confirm" required minlength="10" autocomplete="new-password" />
+				</label>
+				<div><button type="submit" class="btn">Şifreyi güncelle</button></div>
+			</form>
+		</div>
+	</div>
+</Portal>
