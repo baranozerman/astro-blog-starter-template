@@ -20,7 +20,7 @@ npm install
 npx wrangler login
 
 # 1. Veritabanı ve dosya deposu oluşturun
-npx wrangler d1 create prodinox-portal       # çıktıdaki database_id'yi wrangler.json'a yazın
+npx wrangler d1 create prodinox-portal       # (zaten oluşturuldu; ID wrangler.json içinde)
 npx wrangler r2 bucket create prodinox-portal-files
 
 # 2. Tabloları oluşturun

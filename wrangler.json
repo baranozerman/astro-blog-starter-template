@@ -17,7 +17,7 @@
 		{
 			"binding": "DB",
 			"database_name": "prodinox-portal",
-			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+			"database_id": "76abac16-4f57-42dc-862c-9ac3d857f438",
 			"migrations_dir": "migrations"
 		}
 	],
