@@ -1,0 +1,86 @@
+---
+import "../styles/portal.css";
+import { MESSAGES } from "../lib/portal";
+
+interface Props {
+	title: string;
+	/** Inline error rendered above the page content (e.g. form validation). */
+	error?: string;
+	/** Centered single-card layout used by login and setup. */
+	bare?: boolean;
+}
+
+const { title, error, bare = false } = Astro.props;
+const user = Astro.locals.user;
+const path = Astro.url.pathname;
+const ok = MESSAGES[Astro.url.searchParams.get("ok") ?? ""];
+const err = error || MESSAGES[Astro.url.searchParams.get("err") ?? ""];
+const isActive = (href: string) =>
+	href === "/portal" ? path === "/portal" || path.startsWith("/portal/folders") : path.startsWith(href);
+---
+
+<!doctype html>
+<html lang="tr">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex, nofollow" />
+		<title>{title} · Prodinox Müşteri Portalı</title>
+	</head>
+	<body class={bare ? "bare" : ""}>
+		{
+			!bare && user && (
+				<header class="topbar">
+					<div class="wrap topbar-inner">
+						<a class="brand" href="/portal">
+							<span class="brand-mark">P</span>
+							<span>
+								PRODINOX <small>Müşteri Portalı</small>
+							</span>
+						</a>
+						<nav>
+							<a href="/portal" class:list={{ active: isActive("/portal") }}>
+								Dosyalar
+							</a>
+							{user.role === "admin" && (
+								<a href="/portal/admin" class:list={{ active: isActive("/portal/admin") }}>
+									Yönetim
+								</a>
+							)}
+							<a href="/portal/account" class:list={{ active: isActive("/portal/account") }}>
+								Hesabım
+							</a>
+							<form method="post" action="/portal/logout">
+								<button type="submit" class="link">
+									Çıkış
+								</button>
+							</form>
+						</nav>
+					</div>
+				</header>
+			)
+		}
+		<main class={bare ? "card-center" : "wrap page"}>
+			{
+				bare && (
+					<div class="brand brand-lg">
+						<span class="brand-mark">P</span>
+						<span>
+							PRODINOX <small>Müşteri Portalı</small>
+						</span>
+					</div>
+				)
+			}
+			{ok && <p class="flash ok">{ok}</p>}
+			{err && <p class="flash err">{err}</p>}
+			<slot />
+		</main>
+		{
+			!bare && user && (
+				<footer class="wrap footer">
+					{user.name} · {user.company || user.email}
+				</footer>
+			)
+		}
+	</body>
+</html>

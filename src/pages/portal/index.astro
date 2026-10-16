@@ -1,0 +1,41 @@
+---
+import Portal from "../../layouts/Portal.astro";
+import { listAccessibleFolders } from "../../lib/portal";
+
+export const prerender = false;
+
+const user = Astro.locals.user!;
+const folders = await listAccessibleFolders(Astro.locals.runtime.env.DB, user);
+---
+
+<Portal title="Dosyalar">
+	<div class="page-head">
+		<div>
+			<h1>Hoş geldiniz, {user.name}</h1>
+			<p class="muted">Erişim izniniz olan klasörler aşağıda listelenmiştir.</p>
+		</div>
+		{user.role === "admin" && <a class="btn secondary" href="/portal/admin">Klasör / kullanıcı yönet</a>}
+	</div>
+
+	{
+		folders.length === 0 ? (
+			<div class="panel empty">
+				Henüz size atanmış bir klasör yok. Erişim için Prodinox ile iletişime geçin.
+			</div>
+		) : (
+			<div class="cards">
+				{folders.map((f) => (
+					<a class="card" href={`/portal/folders/${f.id}`}>
+						<h3>{f.name}</h3>
+						<p>{f.description || " "}</p>
+						<div class="badges">
+							{f.can_read ? <span class="badge">Görüntüleme</span> : null}
+							{f.can_upload ? <span class="badge">Yükleme</span> : null}
+							{f.can_read ? <span class="badge gray">{f.file_count} dosya</span> : null}
+						</div>
+					</a>
+				))}
+			</div>
+		)
+	}
+</Portal>

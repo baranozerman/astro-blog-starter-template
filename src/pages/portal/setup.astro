@@ -1,0 +1,84 @@
+---
+import Portal from "../../layouts/Portal.astro";
+import { createSession, hashPassword, passwordProblem } from "../../lib/auth";
+import { audit } from "../../lib/portal";
+
+export const prerender = false;
+
+// One-time page that creates the first administrator. It is disabled as soon
+// as any user exists, and requires the SETUP_TOKEN secret so nobody else can
+// claim a freshly deployed portal.
+const { DB, SETUP_TOKEN } = Astro.locals.runtime.env;
+const userCount = await DB.prepare("SELECT COUNT(*) AS n FROM users").first<number>("n");
+if (userCount !== 0) return Astro.redirect("/portal/login");
+
+let error = "";
+const values = { email: "", name: "", company: "Prodinox" };
+if (Astro.request.method === "POST" && SETUP_TOKEN) {
+	const form = await Astro.request.formData();
+	values.email = String(form.get("email") ?? "").trim().toLowerCase();
+	values.name = String(form.get("name") ?? "").trim();
+	values.company = String(form.get("company") ?? "").trim();
+	const password = String(form.get("password") ?? "");
+
+	if (String(form.get("token") ?? "") !== SETUP_TOKEN) error = "Kurulum anahtarı hatalı.";
+	else if (!values.email || !values.name) error = "E-posta ve ad zorunludur.";
+	else error = passwordProblem(password) ?? "";
+
+	if (!error) {
+		const { meta } = await DB.prepare(
+			`INSERT INTO users (email, name, company, password_hash, role)
+			 SELECT ?, ?, ?, ?, 'admin' WHERE NOT EXISTS (SELECT 1 FROM users)`,
+		)
+			.bind(values.email, values.name, values.company, await hashPassword(password))
+			.run();
+		if (meta.changes !== 1) return Astro.redirect("/portal/login");
+		const userId = meta.last_row_id;
+		await audit(DB, userId, "setup", values.email).run();
+		await createSession(DB, Astro.cookies, Astro.url, userId);
+		return Astro.redirect("/portal/admin?ok=created");
+	}
+}
+---
+
+<Portal title="Kurulum" bare error={error}>
+	<div class="panel">
+		<h2>İlk yönetici hesabı</h2>
+		{
+			SETUP_TOKEN ? (
+				<form method="post" class="stack">
+					<label>
+						Kurulum anahtarı
+						<input type="password" name="token" required />
+						<span class="hint">Cloudflare'de tanımladığınız SETUP_TOKEN değeri.</span>
+					</label>
+					<label>
+						Ad Soyad
+						<input type="text" name="name" value={values.name} required />
+					</label>
+					<label>
+						Şirket
+						<input type="text" name="company" value={values.company} />
+					</label>
+					<label>
+						E-posta
+						<input type="email" name="email" value={values.email} required autocomplete="username" />
+					</label>
+					<label>
+						Şifre
+						<input type="password" name="password" required minlength="10" autocomplete="new-password" />
+					</label>
+					<button type="submit" class="btn">Yönetici oluştur</button>
+				</form>
+			) : (
+				<p>
+					Kurulum için önce <code>SETUP_TOKEN</code> gizli değişkenini tanımlayın:
+					<br />
+					<code>npx wrangler secret put SETUP_TOKEN</code>
+					<br />
+					(Yerel geliştirmede <code>.dev.vars</code> dosyasına ekleyin.)
+				</p>
+			)
+		}
+	</div>
+</Portal>
