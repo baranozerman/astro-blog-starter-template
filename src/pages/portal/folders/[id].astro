@@ -11,10 +11,12 @@ import {
 	parseId,
 	type FileRow,
 } from "../../../lib/portal";
+import { StorageError, deleteStored, storeUpload } from "../../../lib/storage";
 
 export const prerender = false;
 
-const { DB, FILES } = Astro.locals.runtime.env;
+const env = Astro.locals.runtime.env;
+const { DB } = env;
 const user = Astro.locals.user!;
 const folderId = parseId(Astro.params.id);
 const access = folderId ? await getFolderAccess(DB, user, folderId) : null;
@@ -37,11 +39,16 @@ if (Astro.request.method === "POST") {
 		for (const file of files) {
 			const name = cleanFileName(file.name);
 			const contentType = file.type || "application/octet-stream";
-			const key = `folders/${folder.id}/${crypto.randomUUID()}`;
-			await FILES.put(key, file, {
-				httpMetadata: { contentType },
-				customMetadata: { name, uploadedBy: String(user.id) },
-			});
+			let key: string;
+			try {
+				key = await storeUpload(env, folder.id, name, file, contentType);
+			} catch (e) {
+				if (e instanceof StorageError) {
+					console.error(e.message);
+					return Astro.redirect(`${here}?err=storage`);
+				}
+				throw e;
+			}
 			await DB.batch([
 				DB.prepare(
 					`INSERT INTO files (folder_id, r2_key, name, size, content_type, uploaded_by)
@@ -64,7 +71,15 @@ if (Astro.request.method === "POST") {
 		if (!file || !(isAdmin || (canUpload && file.uploaded_by === user.id))) {
 			return Astro.redirect(`${here}?err=forbidden`);
 		}
-		await FILES.delete(file.r2_key);
+		try {
+			await deleteStored(env, [file.r2_key]);
+		} catch (e) {
+			if (e instanceof StorageError) {
+				console.error(e.message);
+				return Astro.redirect(`${here}?err=storage`);
+			}
+			throw e;
+		}
 		await DB.batch([
 			DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id),
 			audit(DB, user.id, "delete", `${folder.name} / ${file.name}`),

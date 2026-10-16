@@ -49,6 +49,7 @@ export const MESSAGES: Record<string, string> = {
 	self: "Kendi yönetici yetkinizi kaldıramaz, hesabınızı silemez veya pasifleştiremezsiniz.",
 	exists: "Bu e-posta adresiyle kayıtlı bir kullanıcı zaten var.",
 	invalid: "Lütfen formdaki alanları kontrol edin.",
+	storage: "Dosya sunucusuna şu anda ulaşılamıyor. Lütfen biraz sonra tekrar deneyin.",
 };
 
 export function parseId(value: string | undefined | null) {
@@ -100,13 +101,6 @@ export function audit(db: D1Database, userId: number | null, action: string, det
 	return db
 		.prepare("INSERT INTO audit_log (user_id, action, detail) VALUES (?, ?, ?)")
 		.bind(userId, action, detail);
-}
-
-/** Deletes R2 objects in chunks of 1000 (the R2 bulk-delete limit). */
-export async function deleteObjects(bucket: R2Bucket, keys: string[]) {
-	for (let i = 0; i < keys.length; i += 1000) {
-		await bucket.delete(keys.slice(i, i + 1000));
-	}
 }
 
 export function cleanFileName(name: string) {

@@ -1,10 +1,12 @@
 ---
 import Portal from "../../../../layouts/Portal.astro";
-import { audit, deleteObjects, parseId, type Folder } from "../../../../lib/portal";
+import { audit, parseId, type Folder } from "../../../../lib/portal";
+import { StorageError, deleteStored } from "../../../../lib/storage";
 
 export const prerender = false;
 
-const { DB, FILES } = Astro.locals.runtime.env;
+const env = Astro.locals.runtime.env;
+const { DB } = env;
 const admin = Astro.locals.user!;
 const folderId = parseId(Astro.params.id);
 const folder = folderId
@@ -49,7 +51,15 @@ if (Astro.request.method === "POST") {
 		const { results } = await DB.prepare("SELECT r2_key FROM files WHERE folder_id = ?")
 			.bind(folder.id)
 			.all<{ r2_key: string }>();
-		await deleteObjects(FILES, results.map((r) => r.r2_key));
+		try {
+			await deleteStored(env, results.map((r) => r.r2_key));
+		} catch (e) {
+			if (e instanceof StorageError) {
+				console.error(e.message);
+				return Astro.redirect(`${here}?err=storage`);
+			}
+			throw e;
+		}
 		await DB.batch([
 			DB.prepare("DELETE FROM folders WHERE id = ?").bind(folder.id),
 			audit(DB, admin.id, "folder_delete", folder.name),
