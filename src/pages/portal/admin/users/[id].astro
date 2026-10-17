@@ -70,7 +70,7 @@ if (Astro.request.method === "POST") {
 			...folderIds.map((fid) =>
 				DB.prepare(
 					`INSERT INTO permissions (user_id, folder_id, can_read, can_upload)
-					 SELECT ?, id, ?, ? FROM folders WHERE id = ?`,
+					 SELECT ?, id, ?, ? FROM folders WHERE id = ? AND parent_id IS NULL`,
 				).bind(user.id, read.has(String(fid)) ? 1 : 0, upload.has(String(fid)) ? 1 : 0, fid),
 			),
 			audit(DB, admin.id, "permissions", user.email),
@@ -91,6 +91,7 @@ if (Astro.request.method === "POST") {
 const { results: folders } = await DB.prepare(
 	`SELECT f.id, f.name, COALESCE(p.can_read, 0) AS can_read, COALESCE(p.can_upload, 0) AS can_upload
 	 FROM folders f LEFT JOIN permissions p ON p.folder_id = f.id AND p.user_id = ?
+	 WHERE f.parent_id IS NULL
 	 ORDER BY f.name COLLATE NOCASE`,
 )
 	.bind(user.id)

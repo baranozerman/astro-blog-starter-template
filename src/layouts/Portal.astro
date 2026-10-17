@@ -3,12 +3,13 @@ import "../styles/portal.css";
 import Icon from "../components/portal/Icon.astro";
 import Logo from "../components/portal/Logo.astro";
 import { MESSAGES } from "../lib/portal";
+import { BACKDROPS, todaysBackdrop } from "../lib/backdrops";
 
 interface Props {
 	title: string;
 	/** Inline error rendered above the page content (e.g. form validation). */
 	error?: string;
-	/** Split-screen layout without navigation, used by login and setup. */
+	/** Login/setup layout: a single floating card over the backdrop, no navigation. */
 	bare?: boolean;
 }
 
@@ -17,6 +18,8 @@ const user = Astro.locals.user;
 const path = Astro.url.pathname;
 const ok = MESSAGES[Astro.url.searchParams.get("ok") ?? ""];
 const err = error || MESSAGES[Astro.url.searchParams.get("err") ?? ""];
+// Login shows a different image on each visit; inside the app it stays put for the day.
+const backdrop = bare ? BACKDROPS[Math.floor(Math.random() * BACKDROPS.length)] : todaysBackdrop();
 
 const nav = [
 	{ href: "/portal", label: "Dosyalar", icon: "folder" as const, active: path === "/portal" || path.startsWith("/portal/folders") },
@@ -39,58 +42,58 @@ const initials = (user?.name ?? "")
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="robots" content="noindex, nofollow" />
-		<meta name="theme-color" content="#0e1a2b" />
+		<meta name="theme-color" content="#0b1424" />
 		<link rel="icon" type="image/svg+xml" href="/portal-icon.svg" />
 		<link rel="apple-touch-icon" href="/portal-icon.svg" />
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+		<link rel="preload" as="image" href={`/backgrounds/${backdrop.file}-1200.jpg`} media="(max-width: 860px)" />
+		<link rel="preload" as="image" href={`/backgrounds/${backdrop.file}.jpg`} media="(min-width: 861px)" />
 		<title>{title} · Prodinox</title>
 	</head>
 	<body class={bare ? "bare" : "app"}>
+		<div class="backdrop" aria-hidden="true">
+			<picture>
+				<source media="(max-width: 860px)" srcset={`/backgrounds/${backdrop.file}-1200.jpg`} />
+				<img src={`/backgrounds/${backdrop.file}.jpg`} alt="" style={`object-position:${backdrop.focus}`} />
+			</picture>
+		</div>
+
 		{
 			bare ? (
 				<div class="auth">
-					<aside class="auth-brand">
-						<Logo tone="light" />
-						<div class="auth-brand-copy">
-							<h1>Proje dosyalarınız, tek ve güvenli bir yerde.</h1>
-							<p>Teknik çizimler, teklifler ve belgeler için Prodinox ile müşterilerimiz arasındaki ortak çalışma alanı.</p>
-						</div>
-						<ul class="auth-points">
-							<li><Icon name="lock" /> Size özel, izinli erişim</li>
-							<li><Icon name="upload" /> Dosya yükleme ve paylaşma</li>
-							<li><Icon name="shield" /> Tüm işlemler kayıt altında</li>
-						</ul>
-					</aside>
-					<main class="auth-main">
-						<div class="auth-card">
-							<div class="auth-logo-mobile"><Logo /></div>
-							{ok && <p class="flash ok"><Icon name="check" />{ok}</p>}
-							{err && <p class="flash err"><Icon name="alert" />{err}</p>}
-							<slot />
-						</div>
-						<p class="auth-foot">© {new Date().getFullYear()} Prodinox</p>
+					<a class="auth-logo" href="/portal">
+						<Logo tone="light" height={46} />
+					</a>
+					<main class="auth-card">
+						{ok && <p class="flash ok"><Icon name="check" />{ok}</p>}
+						{err && <p class="flash err"><Icon name="alert" />{err}</p>}
+						<slot />
 					</main>
+					<p class="slogan">
+						<span>Meet</span> beyond <br /><span>the</span> visible.
+					</p>
 				</div>
 			) : (
-				<div class="shell">
-					<aside class="sidebar">
-						<a class="sidebar-logo" href="/portal"><Logo tone="light" /></a>
-						<nav class="sidebar-nav">
+				<>
+					<header class="topbar">
+						<a class="topbar-logo" href="/portal">
+							<Logo tone="light" height={34} />
+							<span class="topbar-tag">Müşteri Portalı</span>
+						</a>
+						<nav class="pills">
 							{nav.map((item) => (
 								<a href={item.href} class:list={{ active: item.active }}>
-									<Icon name={item.icon} />
+									<Icon name={item.icon} size={16} />
 									{item.label}
 								</a>
 							))}
 						</nav>
 						{user && (
-							<div class="sidebar-user">
-								<span class="avatar">{initials}</span>
-								<span class="sidebar-user-text">
-									<strong>{user.name}</strong>
-									<small>{user.company || user.email}</small>
+							<div class="topbar-user">
+								<span class="avatar" title={`${user.name} · ${user.company || user.email}`}>
+									{initials}
 								</span>
 								<form method="post" action="/portal/logout">
 									<button type="submit" class="icon-btn" title="Çıkış yap" aria-label="Çıkış yap">
@@ -99,13 +102,6 @@ const initials = (user?.name ?? "")
 								</form>
 							</div>
 						)}
-					</aside>
-
-					<header class="mobile-top">
-						<a href="/portal"><Logo /></a>
-						<form method="post" action="/portal/logout">
-							<button type="submit" class="icon-btn" aria-label="Çıkış yap"><Icon name="logout" /></button>
-						</form>
 					</header>
 
 					<main class="content">
@@ -122,9 +118,11 @@ const initials = (user?.name ?? "")
 							</a>
 						))}
 					</nav>
-				</div>
+				</>
 			)
 		}
+		<p class="credit">{backdrop.caption}</p>
+
 		<script>
 			// Fade out success messages after a few seconds.
 			for (const el of document.querySelectorAll<HTMLElement>("[data-autohide]")) {

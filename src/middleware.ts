@@ -1,5 +1,6 @@
 import { defineMiddleware } from "astro:middleware";
 import { SESSION_COOKIE, getSessionUser } from "./lib/auth";
+import { ensureSchema } from "./lib/schema";
 
 const PUBLIC_PATHS = new Set(["/portal/login", "/portal/setup"]);
 
@@ -9,6 +10,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	if (path !== "/portal" && !path.startsWith("/portal/")) return next();
 
 	const { DB } = context.locals.runtime.env;
+	await ensureSchema(DB);
 	const token = context.cookies.get(SESSION_COOKIE)?.value;
 	const user = token ? await getSessionUser(DB, token) : null;
 	context.locals.user = user;

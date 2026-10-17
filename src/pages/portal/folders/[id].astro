@@ -7,12 +7,15 @@ import {
 	audit,
 	cleanFileName,
 	fileKind,
+	folderTree,
 	formatBytes,
 	formatDate,
 	formatRelative,
 	getFolderAccess,
 	parseId,
+	subtreeIds,
 	type FileRow,
+	type Folder,
 } from "../../../lib/portal";
 import { StorageError, deleteStored, storeUpload } from "../../../lib/storage";
 
@@ -24,13 +27,46 @@ const user = Astro.locals.user!;
 const folderId = parseId(Astro.params.id);
 const access = folderId ? await getFolderAccess(DB, user, folderId) : null;
 if (!access) return Astro.redirect("/portal?err=forbidden");
-const { folder, canRead, canUpload } = access;
+const { folder, path, rootId, canRead, canUpload } = access;
 const isAdmin = user.role === "admin";
 const here = `/portal/folders/${folder.id}`;
+const pathLabel = path.map((p) => p.name).join(" / ");
+
+// Admins manage everything; customers with upload rights manage what they created.
+const canManageFile = (f: FileRow) => isAdmin || (canUpload && f.uploaded_by === user.id);
+const canManageFolder = (f: Folder) => isAdmin || (canUpload && f.created_by === user.id);
+
+function storageFailed(e: unknown) {
+	if (!(e instanceof StorageError)) throw e;
+	console.error(e.message);
+	return Astro.redirect(`${here}?err=storage`);
+}
 
 if (Astro.request.method === "POST") {
 	const form = await Astro.request.formData();
 	const action = form.get("action");
+	const ids = (key: string) => form.getAll(key).map((v) => parseId(String(v))).filter((n) => n !== null);
+	// Items acted on must sit directly in this folder; this keeps every check local to one listing.
+	const childFiles = async (list: number[]) =>
+		list.length === 0
+			? []
+			: (
+					await DB.prepare(
+						`SELECT * FROM files WHERE folder_id = ? AND id IN (${list.map(() => "?").join(",")})`,
+					)
+						.bind(folder.id, ...list)
+						.all<FileRow>()
+				).results;
+	const childFolders = async (list: number[]) =>
+		list.length === 0
+			? []
+			: (
+					await DB.prepare(
+						`SELECT * FROM folders WHERE parent_id = ? AND id IN (${list.map(() => "?").join(",")})`,
+					)
+						.bind(folder.id, ...list)
+						.all<Folder>()
+				).results;
 
 	if (action === "upload") {
 		if (!canUpload) return Astro.redirect(`${here}?err=forbidden`);
@@ -46,50 +82,131 @@ if (Astro.request.method === "POST") {
 			try {
 				key = await storeUpload(env, folder.id, name, file, contentType);
 			} catch (e) {
-				if (e instanceof StorageError) {
-					console.error(e.message);
-					return Astro.redirect(`${here}?err=storage`);
-				}
-				throw e;
+				return storageFailed(e);
 			}
 			await DB.batch([
 				DB.prepare(
 					`INSERT INTO files (folder_id, r2_key, name, size, content_type, uploaded_by)
 					 VALUES (?, ?, ?, ?, ?, ?)`,
 				).bind(folder.id, key, name, file.size, contentType, user.id),
-				audit(DB, user.id, "upload", `${folder.name} / ${name}`),
+				audit(DB, user.id, "upload", `${pathLabel} / ${name}`),
 			]);
 		}
 		return Astro.redirect(`${here}?ok=uploaded`);
 	}
 
-	if (action === "delete") {
-		const fileId = parseId(String(form.get("file_id")));
-		const file = fileId
-			? await DB.prepare("SELECT * FROM files WHERE id = ? AND folder_id = ?")
-					.bind(fileId, folder.id)
-					.first<FileRow>()
-			: null;
-		// Admins can delete anything; customers only their own uploads.
-		if (!file || !(isAdmin || (canUpload && file.uploaded_by === user.id))) {
+	if (action === "mkdir") {
+		if (!canUpload) return Astro.redirect(`${here}?err=forbidden`);
+		const name = cleanFileName(String(form.get("name") ?? ""));
+		if (!String(form.get("name") ?? "").trim()) return Astro.redirect(`${here}?err=invalid`);
+		await DB.batch([
+			DB.prepare("INSERT INTO folders (name, parent_id, created_by) VALUES (?, ?, ?)").bind(
+				name,
+				folder.id,
+				user.id,
+			),
+			audit(DB, user.id, "folder_create", `${pathLabel} / ${name}`),
+		]);
+		return Astro.redirect(`${here}?ok=folder_created`);
+	}
+
+	if (action === "rename") {
+		const raw = String(form.get("name") ?? "").trim();
+		if (!raw) return Astro.redirect(`${here}?err=invalid`);
+		const name = cleanFileName(raw);
+		const [file] = await childFiles(ids("file"));
+		const [sub] = await childFolders(ids("folder"));
+		if (file && canManageFile(file)) {
+			await DB.batch([
+				DB.prepare("UPDATE files SET name = ? WHERE id = ?").bind(name, file.id),
+				audit(DB, user.id, "rename", `${pathLabel} / ${file.name} → ${name}`),
+			]);
+		} else if (sub && canManageFolder(sub)) {
+			await DB.batch([
+				DB.prepare("UPDATE folders SET name = ? WHERE id = ?").bind(name, sub.id),
+				audit(DB, user.id, "rename", `${pathLabel} / ${sub.name} → ${name}`),
+			]);
+		} else {
 			return Astro.redirect(`${here}?err=forbidden`);
 		}
-		try {
-			await deleteStored(env, [file.r2_key]);
-		} catch (e) {
-			if (e instanceof StorageError) {
-				console.error(e.message);
-				return Astro.redirect(`${here}?err=storage`);
+		return Astro.redirect(`${here}?ok=renamed`);
+	}
+
+	if (action === "move") {
+		const files = await childFiles(ids("file"));
+		const subs = await childFolders(ids("folder"));
+		if (files.length + subs.length === 0) return Astro.redirect(`${here}?err=noselection`);
+		if (!files.every(canManageFile) || !subs.every(canManageFolder)) {
+			return Astro.redirect(`${here}?err=forbidden`);
+		}
+		const targetId = parseId(String(form.get("target")));
+		const target = targetId ? await getFolderAccess(DB, user, targetId) : null;
+		// Customers may only reorganise inside the top-level folder they are working in.
+		if (!target || !target.canUpload || (!isAdmin && target.rootId !== rootId)) {
+			return Astro.redirect(`${here}?err=forbidden`);
+		}
+		for (const sub of subs) {
+			if ((await subtreeIds(DB, sub.id)).includes(target.folder.id)) {
+				return Astro.redirect(`${here}?err=badmove`);
 			}
-			throw e;
+		}
+		const dest = target.path.map((p) => p.name).join(" / ");
+		await DB.batch([
+			...files.map((f) => DB.prepare("UPDATE files SET folder_id = ? WHERE id = ?").bind(target.folder.id, f.id)),
+			...subs.map((f) => DB.prepare("UPDATE folders SET parent_id = ? WHERE id = ?").bind(target.folder.id, f.id)),
+			...[...files, ...subs].map((item) => audit(DB, user.id, "move", `${pathLabel} / ${item.name} → ${dest}`)),
+		]);
+		return Astro.redirect(`${here}?ok=moved`);
+	}
+
+	if (action === "delete") {
+		const files = await childFiles(ids("file"));
+		const subs = await childFolders(ids("folder"));
+		if (files.length + subs.length === 0) return Astro.redirect(`${here}?err=noselection`);
+		if (!files.every(canManageFile) || !subs.every(canManageFolder)) {
+			return Astro.redirect(`${here}?err=forbidden`);
+		}
+		// Gather everything stored under the selected folders.
+		const folderIds: number[] = [];
+		for (const sub of subs) folderIds.push(...(await subtreeIds(DB, sub.id)));
+		const nested =
+			folderIds.length === 0
+				? []
+				: (
+						await DB.prepare(
+							`SELECT * FROM files WHERE folder_id IN (${folderIds.map(() => "?").join(",")})`,
+						)
+							.bind(...folderIds)
+							.all<FileRow>()
+					).results;
+		// Customers can only remove folders that are completely empty.
+		if (!isAdmin && (nested.length > 0 || folderIds.length > subs.length)) {
+			return Astro.redirect(`${here}?err=notempty`);
+		}
+		try {
+			await deleteStored(env, [...files, ...nested].map((f) => f.r2_key));
+		} catch (e) {
+			return storageFailed(e);
 		}
 		await DB.batch([
-			DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id),
-			audit(DB, user.id, "delete", `${folder.name} / ${file.name}`),
+			...files.map((f) => DB.prepare("DELETE FROM files WHERE id = ?").bind(f.id)),
+			...subs.map((f) => DB.prepare("DELETE FROM folders WHERE id = ?").bind(f.id)),
+			...[...files, ...subs].map((item) => audit(DB, user.id, "delete", `${pathLabel} / ${item.name}`)),
 		]);
 		return Astro.redirect(`${here}?ok=deleted`);
 	}
 }
+
+const { results: subfolders } = await DB.prepare(
+	`SELECT f.*,
+	        (SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS file_count,
+	        (SELECT COUNT(*) FROM folders c WHERE c.parent_id = f.id) AS folder_count,
+	        (SELECT MAX(created_at) FROM files WHERE folder_id = f.id) AS last_upload
+	 FROM folders f WHERE f.parent_id = ?
+	 ORDER BY f.name COLLATE NOCASE`,
+)
+	.bind(folder.id)
+	.all<Folder & { file_count: number; folder_count: number; last_upload: number | null }>();
 
 // Upload-only users see just the files they uploaded themselves.
 const { results: files } = await DB.prepare(
@@ -100,200 +217,332 @@ const { results: files } = await DB.prepare(
 )
 	.bind(...(canRead ? [folder.id] : [folder.id, user.id]))
 	.all<FileRow & { uploader: string | null }>();
+
+const moveTargets = canUpload ? await folderTree(DB, isAdmin ? "all" : [rootId]) : [];
 const maxMb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
+const anyManageable = files.some(canManageFile) || subfolders.some(canManageFolder);
+const parent = path.length > 1 ? path[path.length - 2] : null;
 ---
 
 <Portal title={folder.name}>
 	<div class="page-head">
 		<div>
-			<div class="breadcrumb">
-				<a href="/portal">Dosyalar</a>
-				<Icon name="chevron" size={14} />
-			</div>
+			<nav class="breadcrumb" aria-label="Konum">
+				<a href="/portal"><Icon name="home" size={14} /> Dosyalar</a>
+				{
+					path.slice(0, -1).map((p) => (
+						<>
+							<Icon name="chevron" size={14} />
+							<a href={`/portal/folders/${p.id}`}>{p.name}</a>
+						</>
+					))
+				}
+			</nav>
 			<h1>{folder.name}</h1>
-			{folder.description && <p class="muted">{folder.description}</p>}
+			{folder.description && <p class="lead-light">{folder.description}</p>}
 		</div>
 		{
-			isAdmin && (
-				<a class="btn secondary" href={`/portal/admin/folders/${folder.id}`}>
-					<Icon name="settings" /> Klasör ayarları
+			isAdmin && path.length === 1 && (
+				<a class="btn glass" href={`/portal/admin/folders/${folder.id}`}>
+					<Icon name="users" /> Erişim ayarları
 				</a>
 			)
 		}
 	</div>
 
-	{
-		canUpload && (
-			<div class="panel">
-				<form method="post" enctype="multipart/form-data" id="upload-form">
-					<input type="hidden" name="action" value="upload" />
-					<label class="dropzone" id="dropzone">
-						<Icon name="upload" size={30} />
-						<strong>Dosyaları sürükleyip bırakın veya seçmek için dokunun</strong>
-						<span class="hint">Tek seferde toplam en fazla {maxMb} MB</span>
-						<input type="file" name="files" multiple required id="file-input" />
-					</label>
-					<ul class="selected" id="selected" hidden />
-					<div class="upload-actions" id="upload-actions" hidden>
-						<button type="submit" class="btn" id="upload-btn">
+	<div class:list={["fm", { "fm-readonly": !canUpload }]}>
+		{
+			canUpload && (
+				<aside class="transfer-card">
+					<form method="post" enctype="multipart/form-data" id="upload-form">
+						<input type="hidden" name="action" value="upload" />
+						<label class="drop" id="dropzone">
+							<span class="drop-plus">
+								<Icon name="plus" size={28} />
+							</span>
+							<span class="drop-text">
+								<strong>Dosya ekle</strong>
+								<span>veya buraya sürükleyip bırakın</span>
+							</span>
+							<input type="file" name="files" multiple required id="file-input" />
+						</label>
+						<ul class="selected" id="selected" hidden />
+						<div class="ring-wrap" id="ring" hidden>
+							<svg viewBox="0 0 120 120" class="ring">
+								<circle cx="60" cy="60" r="52" class="ring-track" />
+								<circle cx="60" cy="60" r="52" class="ring-bar" id="ring-bar" />
+							</svg>
+							<span class="ring-pct" id="ring-pct">0%</span>
+						</div>
+						<p class="hint center" id="upload-status">Tek seferde en fazla {maxMb} MB · {folder.name}</p>
+						<button type="submit" class="btn block" id="upload-btn" disabled>
 							<Icon name="upload" /> Yükle
 						</button>
-						<div class="progress" id="progress" hidden>
-							<div />
-						</div>
-						<span class="hint" id="upload-status" />
-					</div>
-				</form>
-			</div>
-		)
-	}
+					</form>
+					<div class="transfer-sep" />
+					<button type="button" class="btn secondary block" data-open="dlg-mkdir">
+						<Icon name="folderPlus" /> Yeni klasör
+					</button>
+				</aside>
+			)
+		}
 
-	<div class="panel">
-		<div class="panel-head">
-			<h2>
-				{canRead ? "Dosyalar" : "Yüklediğiniz dosyalar"} <span class="badge gray">{files.length}</span>
-			</h2>
-			{
-				files.length > 5 && (
-					<div class="search">
-						<Icon name="search" size={16} />
-						<input type="search" id="file-search" placeholder="Dosya ara…" aria-label="Dosya ara" />
-					</div>
-				)
-			}
-		</div>
-		{
-			files.length === 0 ? (
-				<div class="empty">
-					<Icon name="file" size={36} />
-					<span>Bu klasörde henüz dosya yok.</span>
+		<section class="panel fm-main">
+			<div class="fm-toolbar">
+				<div class="fm-bulk" id="bulk" hidden>
+					<span id="bulk-count">0 seçili</span>
+					<button type="button" class="btn small secondary" data-bulk="move"><Icon name="move" size={16} /> Taşı</button>
+					<button type="button" class="btn small danger" data-bulk="delete"><Icon name="trash" size={16} /> Sil</button>
 				</div>
-			) : (
-				<div class="files" id="files">
-					<div class="file-row head">
-						<span>Ad</span>
-						<span>Boyut</span>
-						<span>Yükleyen</span>
-						<span>Tarih</span>
-						<span />
+				<div class="search">
+					<Icon name="search" size={16} />
+					<input type="search" id="file-search" placeholder="Bu klasörde ara…" aria-label="Bu klasörde ara" />
+				</div>
+			</div>
+
+			{
+				subfolders.length + files.length === 0 && !parent ? (
+					<div class="empty">
+						<Icon name="folder" size={40} />
+						<strong>Bu klasör boş</strong>
+						<span>{canUpload ? "Soldan dosya ekleyin veya yeni bir klasör oluşturun." : "Henüz paylaşılan dosya yok."}</span>
 					</div>
-					{files.map((f) => {
-						const kind = fileKind(f.name);
-						const canDelete = isAdmin || (canUpload && f.uploaded_by === user.id);
-						return (
+				) : (
+					<div class="files" id="files">
+						<div class="file-row head">
+							<span class="fm-check">
+								{anyManageable && <input type="checkbox" id="select-all" aria-label="Tümünü seç" />}
+							</span>
+							<span>Ad</span>
+							<span>Boyut</span>
+							<span>Yükleyen</span>
+							<span>Tarih</span>
+							<span />
+						</div>
+
+						{parent && (
+							<div class="file-row up">
+								<span class="fm-check" />
+								<a class="file-name" href={`/portal/folders/${parent.id}`}>
+									<span class="file-type folder"><Icon name="arrowLeft" size={18} /></span>
+									<span>Üst klasöre dön</span>
+								</a>
+							</div>
+						)}
+
+						{subfolders.map((f) => (
 							<div class="file-row" data-name={f.name.toLocaleLowerCase("tr-TR")}>
+								<span class="fm-check">
+									{canManageFolder(f) && (
+										<input type="checkbox" class="pick" data-kind="folder" data-id={f.id} aria-label={`${f.name} seç`} />
+									)}
+								</span>
 								<div class="file-name">
-									<span class:list={["file-type", kind.group]}>{kind.label}</span>
+									<span class="file-type folder"><Icon name="folder" size={20} /></span>
 									<div>
-										<a href={`/portal/files/${f.id}`} title={f.name}>
-											{f.name}
-										</a>
+										<a href={`/portal/folders/${f.id}`}>{f.name}</a>
 										<span class="file-sub">
-											{formatBytes(f.size)} · {formatRelative(f.created_at)}
-											{f.uploader && ` · ${f.uploader}`}
+											{f.folder_count > 0 && `${f.folder_count} klasör · `}{f.file_count} dosya
 										</span>
 									</div>
 								</div>
-								<span class="file-meta">{formatBytes(f.size)}</span>
-								<span class="file-meta">{f.uploader ?? "—"}</span>
-								<span class="file-meta" title={formatDate(f.created_at)}>
-									{formatRelative(f.created_at)}
-								</span>
+								<span class="file-meta">{f.folder_count > 0 && `${f.folder_count} klasör, `}{f.file_count} dosya</span>
+								<span class="file-meta">—</span>
+								<span class="file-meta">{f.last_upload ? formatRelative(f.last_upload) : "—"}</span>
 								<div class="file-actions">
-									{INLINE_TYPES.has(f.content_type) && (
-										<a
-											class="btn small secondary icon-only"
-											href={`/portal/files/${f.id}?inline`}
-											target="_blank"
-											rel="noopener"
-											title="Görüntüle"
-											aria-label={`${f.name} görüntüle`}
-										>
-											<Icon name="eye" size={16} />
-										</a>
-									)}
-									<a
-										class="btn small secondary icon-only"
-										href={`/portal/files/${f.id}`}
-										title="İndir"
-										aria-label={`${f.name} indir`}
-									>
-										<Icon name="download" size={16} />
-									</a>
-									{canDelete && (
-										<form method="post" data-confirm="Bu dosya silinsin mi?">
-											<input type="hidden" name="action" value="delete" />
-											<input type="hidden" name="file_id" value={f.id} />
-											<button
-												type="submit"
-												class="btn small danger icon-only"
-												title="Sil"
-												aria-label={`${f.name} sil`}
-											>
-												<Icon name="trash" size={16} />
-											</button>
-										</form>
+									{canManageFolder(f) && (
+										<details class="menu">
+											<summary class="btn small secondary icon-only" aria-label={`${f.name} işlemleri`}>
+												<Icon name="more" size={18} />
+											</summary>
+											<div class="menu-list">
+												<button type="button" data-act="rename" data-kind="folder" data-id={f.id} data-name={f.name}><Icon name="pencil" size={16} /> Yeniden adlandır</button>
+												<button type="button" data-act="move" data-kind="folder" data-id={f.id}><Icon name="move" size={16} /> Taşı</button>
+												<button type="button" class="danger" data-act="delete" data-kind="folder" data-id={f.id} data-name={f.name}><Icon name="trash" size={16} /> Sil</button>
+											</div>
+										</details>
 									)}
 								</div>
 							</div>
-						);
-					})}
-				</div>
-			)
-		}
+						))}
+
+						{files.map((f) => {
+							const kind = fileKind(f.name);
+							return (
+								<div class="file-row" data-name={f.name.toLocaleLowerCase("tr-TR")}>
+									<span class="fm-check">
+										{canManageFile(f) && (
+											<input type="checkbox" class="pick" data-kind="file" data-id={f.id} aria-label={`${f.name} seç`} />
+										)}
+									</span>
+									<div class="file-name">
+										<span class:list={["file-type", kind.group]}>{kind.label}</span>
+										<div>
+											<a href={`/portal/files/${f.id}`} title={f.name}>{f.name}</a>
+											<span class="file-sub">
+												{formatBytes(f.size)} · {formatRelative(f.created_at)}
+												{f.uploader && ` · ${f.uploader}`}
+											</span>
+										</div>
+									</div>
+									<span class="file-meta">{formatBytes(f.size)}</span>
+									<span class="file-meta">{f.uploader ?? "—"}</span>
+									<span class="file-meta" title={formatDate(f.created_at)}>{formatRelative(f.created_at)}</span>
+									<div class="file-actions">
+										{INLINE_TYPES.has(f.content_type) && (
+											<a class="btn small secondary icon-only hide-sm" href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener" title="Görüntüle" aria-label={`${f.name} görüntüle`}>
+												<Icon name="eye" size={16} />
+											</a>
+										)}
+										<a class="btn small secondary icon-only" href={`/portal/files/${f.id}`} title="İndir" aria-label={`${f.name} indir`}>
+											<Icon name="download" size={16} />
+										</a>
+										{canManageFile(f) && (
+											<details class="menu">
+												<summary class="btn small secondary icon-only" aria-label={`${f.name} işlemleri`}>
+													<Icon name="more" size={18} />
+												</summary>
+												<div class="menu-list">
+													{INLINE_TYPES.has(f.content_type) && (
+														<a href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener"><Icon name="eye" size={16} /> Görüntüle</a>
+													)}
+													<button type="button" data-act="rename" data-kind="file" data-id={f.id} data-name={f.name}><Icon name="pencil" size={16} /> Yeniden adlandır</button>
+													<button type="button" data-act="move" data-kind="file" data-id={f.id}><Icon name="move" size={16} /> Taşı</button>
+													<button type="button" class="danger" data-act="delete" data-kind="file" data-id={f.id} data-name={f.name}><Icon name="trash" size={16} /> Sil</button>
+												</div>
+											</details>
+										)}
+									</div>
+								</div>
+							);
+						})}
+
+						{subfolders.length + files.length === 0 && (
+							<div class="empty">
+								<Icon name="folder" size={36} />
+								<span>Bu klasör boş.</span>
+							</div>
+						)}
+					</div>
+				)
+			}
+		</section>
 	</div>
+
+	<!-- Single form used by row menus and bulk actions; JS fills in the selected items. -->
+	<form method="post" id="item-form" hidden>
+		<input type="hidden" name="action" />
+	</form>
+
+	<dialog id="dlg-mkdir" class="dialog">
+		<form method="post" class="stack">
+			<input type="hidden" name="action" value="mkdir" />
+			<h2>Yeni klasör</h2>
+			<p class="hint">{pathLabel} içinde oluşturulacak.</p>
+			<label>Klasör adı <input type="text" name="name" required maxlength="200" autocomplete="off" /></label>
+			<div class="dialog-actions">
+				<button type="button" class="btn secondary" data-close>Vazgeç</button>
+				<button type="submit" class="btn">Oluştur</button>
+			</div>
+		</form>
+	</dialog>
+
+	<dialog id="dlg-rename" class="dialog">
+		<form method="post" class="stack" id="rename-form">
+			<input type="hidden" name="action" value="rename" />
+			<h2>Yeniden adlandır</h2>
+			<label>Yeni ad <input type="text" name="name" required maxlength="200" autocomplete="off" /></label>
+			<div class="dialog-actions">
+				<button type="button" class="btn secondary" data-close>Vazgeç</button>
+				<button type="submit" class="btn">Kaydet</button>
+			</div>
+		</form>
+	</dialog>
+
+	<dialog id="dlg-move" class="dialog">
+		<form method="post" class="stack" id="move-form">
+			<input type="hidden" name="action" value="move" />
+			<h2>Taşı</h2>
+			<p class="hint" id="move-what" />
+			<label>
+				Hedef klasör
+				<select name="target" required>
+					{
+						moveTargets.map((t) => (
+							<option value={t.id} selected={t.id === folder.id} disabled={t.id === folder.id}>
+								{"  ".repeat(t.depth)}{t.path.split(" / ").pop()}{t.id === folder.id ? " (şu anki)" : ""}
+							</option>
+						))
+					}
+				</select>
+			</label>
+			<div class="dialog-actions">
+				<button type="button" class="btn secondary" data-close>Vazgeç</button>
+				<button type="submit" class="btn">Taşı</button>
+			</div>
+		</form>
+	</dialog>
 </Portal>
 
 <script define:vars={{ maxBytes: MAX_UPLOAD_BYTES }}>
-	const form = document.getElementById("upload-form");
-	const input = document.getElementById("file-input");
-	const dropzone = document.getElementById("dropzone");
-	const list = document.getElementById("selected");
-	const actions = document.getElementById("upload-actions");
-	const button = document.getElementById("upload-btn");
-	const progress = document.getElementById("progress");
-	const status = document.getElementById("upload-status");
-
+	const $ = (id) => document.getElementById(id);
 	const fmt = (n) =>
 		n < 1024 * 1024
 			? `${Math.max(1, Math.round(n / 1024))} KB`
 			: `${(n / 1024 / 1024).toLocaleString("tr-TR", { maximumFractionDigits: 1 })} MB`;
 
-	function showSelection() {
-		const files = [...input.files];
-		const total = files.reduce((sum, f) => sum + f.size, 0);
-		list.replaceChildren(
-			...files.map((f) => {
-				const li = document.createElement("li");
-				const name = document.createElement("span");
-				const size = document.createElement("span");
-				name.textContent = f.name;
-				size.textContent = fmt(f.size);
-				size.className = "hint";
-				li.append(name, size);
-				return li;
-			}),
-		);
-		list.hidden = actions.hidden = files.length === 0;
-		const tooBig = total > maxBytes;
-		button.disabled = tooBig;
-		status.textContent = tooBig
-			? `Toplam ${fmt(total)}: sınır ${fmt(maxBytes)}. Lütfen daha az dosya seçin.`
-			: `${files.length} dosya, toplam ${fmt(total)}`;
-	}
-
+	// ---------- upload ----------
+	const form = $("upload-form");
 	if (form) {
+		const input = $("file-input");
+		const dropzone = $("dropzone");
+		const list = $("selected");
+		const button = $("upload-btn");
+		const status = $("upload-status");
+		const ring = $("ring");
+		const bar = $("ring-bar");
+		const pct = $("ring-pct");
+		const circumference = 2 * Math.PI * 52;
+		bar.style.strokeDasharray = `${circumference}`;
+		bar.style.strokeDashoffset = `${circumference}`;
+
+		const showSelection = () => {
+			const files = [...input.files];
+			const total = files.reduce((sum, f) => sum + f.size, 0);
+			list.replaceChildren(
+				...files.map((f) => {
+					const li = document.createElement("li");
+					const name = document.createElement("span");
+					const size = document.createElement("span");
+					name.textContent = f.name;
+					size.textContent = fmt(f.size);
+					size.className = "hint";
+					li.append(name, size);
+					return li;
+				}),
+			);
+			list.hidden = files.length === 0;
+			const tooBig = total > maxBytes;
+			button.disabled = files.length === 0 || tooBig;
+			status.textContent = tooBig
+				? `Toplam ${fmt(total)}: sınır ${fmt(maxBytes)}. Lütfen daha az dosya seçin.`
+				: `${files.length} dosya · ${fmt(total)}`;
+		};
+
 		input.addEventListener("change", showSelection);
 		for (const type of ["dragenter", "dragover"]) {
-			dropzone.addEventListener(type, (e) => {
+			document.addEventListener(type, (e) => {
 				e.preventDefault();
 				dropzone.classList.add("drag");
 			});
 		}
 		for (const type of ["dragleave", "drop"]) {
-			dropzone.addEventListener(type, () => dropzone.classList.remove("drag"));
+			document.addEventListener(type, (e) => {
+				if (type === "dragleave" && e.relatedTarget) return;
+				dropzone.classList.remove("drag");
+			});
 		}
-		dropzone.addEventListener("drop", (e) => {
+		document.addEventListener("drop", (e) => {
 			e.preventDefault();
 			if (e.dataTransfer?.files.length) {
 				input.files = e.dataTransfer.files;
@@ -301,7 +550,7 @@ const maxMb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
 			}
 		});
 
-		// Upload with a progress bar; the server's redirect tells us the outcome.
+		// Upload with a progress ring; the server's redirect tells us the outcome.
 		form.addEventListener("submit", (e) => {
 			if (!input.files.length) return;
 			e.preventDefault();
@@ -309,33 +558,120 @@ const maxMb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
 			xhr.open("POST", location.pathname);
 			xhr.upload.addEventListener("progress", (ev) => {
 				if (!ev.lengthComputable) return;
-				const pct = Math.round((ev.loaded / ev.total) * 100);
-				progress.firstElementChild.style.width = `${pct}%`;
-				status.textContent = pct < 100 ? `Yükleniyor… %${pct}` : "İşleniyor…";
+				const p = ev.loaded / ev.total;
+				bar.style.strokeDashoffset = `${circumference * (1 - p)}`;
+				pct.textContent = `${Math.round(p * 100)}%`;
+				status.textContent = p < 1 ? "Yükleniyor…" : "İşleniyor…";
 			});
 			xhr.addEventListener("load", () => location.assign(xhr.responseURL || location.pathname));
 			xhr.addEventListener("error", () => {
 				status.textContent = "Bağlantı hatası. Lütfen tekrar deneyin.";
 				button.disabled = false;
-				progress.hidden = true;
+				ring.hidden = true;
+				dropzone.hidden = false;
 			});
 			button.disabled = true;
-			progress.hidden = false;
+			dropzone.hidden = true;
+			list.hidden = true;
+			ring.hidden = false;
 			xhr.send(new FormData(form));
 		});
 	}
 
-	const search = document.getElementById("file-search");
+	// ---------- dialogs ----------
+	for (const btn of document.querySelectorAll("[data-open]")) {
+		btn.addEventListener("click", () => {
+			const dlg = $(btn.dataset.open);
+			dlg.showModal();
+			dlg.querySelector("input[type=text]")?.focus();
+		});
+	}
+	for (const btn of document.querySelectorAll("[data-close]")) {
+		btn.addEventListener("click", () => btn.closest("dialog").close());
+	}
+
+	const itemForm = $("item-form");
+	const setItems = (target, items) => {
+		target.querySelectorAll("input[data-item]").forEach((el) => el.remove());
+		for (const { kind, id } of items) {
+			const el = document.createElement("input");
+			el.type = "hidden";
+			el.name = kind;
+			el.value = id;
+			el.dataset.item = "";
+			target.append(el);
+		}
+	};
+
+	function run(act, items, name) {
+		document.querySelectorAll("details.menu[open]").forEach((d) => d.removeAttribute("open"));
+		if (act === "rename") {
+			const f = $("rename-form");
+			setItems(f, items);
+			f.elements.name.value = name;
+			$("dlg-rename").showModal();
+			const field = f.elements.name;
+			field.focus();
+			const dot = name.lastIndexOf(".");
+			field.setSelectionRange(0, items[0].kind === "file" && dot > 0 ? dot : name.length);
+		} else if (act === "move") {
+			const f = $("move-form");
+			setItems(f, items);
+			$("move-what").textContent = items.length === 1 ? "Seçili öğe taşınacak." : `${items.length} öğe taşınacak.`;
+			$("dlg-move").showModal();
+		} else if (act === "delete") {
+			const msg =
+				items.length === 1
+					? `"${name}" silinsin mi?${items[0].kind === "folder" ? " Klasörün içindekiler de silinir." : ""}`
+					: `${items.length} öğe silinsin mi? Seçili klasörlerin içindekiler de silinir.`;
+			if (!confirm(msg)) return;
+			itemForm.elements.action.value = "delete";
+			setItems(itemForm, items);
+			itemForm.submit();
+		}
+	}
+
+	for (const btn of document.querySelectorAll("[data-act]")) {
+		btn.addEventListener("click", () =>
+			run(btn.dataset.act, [{ kind: btn.dataset.kind, id: btn.dataset.id }], btn.dataset.name ?? ""),
+		);
+	}
+	// Close a row menu when clicking elsewhere.
+	document.addEventListener("click", (e) => {
+		for (const d of document.querySelectorAll("details.menu[open]")) {
+			if (!d.contains(e.target)) d.removeAttribute("open");
+		}
+	});
+
+	// ---------- selection ----------
+	const picks = () => [...document.querySelectorAll("input.pick")];
+	const selected = () => picks().filter((p) => p.checked).map((p) => ({ kind: p.dataset.kind, id: p.dataset.id }));
+	const bulk = $("bulk");
+	const refresh = () => {
+		const n = selected().length;
+		bulk.hidden = n === 0;
+		$("bulk-count").textContent = `${n} seçili`;
+		const all = $("select-all");
+		if (all) all.checked = n > 0 && n === picks().filter((p) => !p.closest(".file-row").hidden).length;
+	};
+	for (const p of picks()) p.addEventListener("change", refresh);
+	$("select-all")?.addEventListener("change", (e) => {
+		for (const p of picks()) if (!p.closest(".file-row").hidden) p.checked = e.target.checked;
+		refresh();
+	});
+	for (const btn of document.querySelectorAll("[data-bulk]")) {
+		btn.addEventListener("click", () => {
+			const items = selected();
+			if (items.length) run(btn.dataset.bulk, items, "");
+		});
+	}
+
+	// ---------- search ----------
+	const search = $("file-search");
 	search?.addEventListener("input", () => {
 		const q = search.value.trim().toLocaleLowerCase("tr-TR");
 		for (const row of document.querySelectorAll("#files .file-row[data-name]")) {
 			row.hidden = q !== "" && !row.dataset.name.includes(q);
 		}
 	});
-
-	for (const f of document.querySelectorAll("form[data-confirm]")) {
-		f.addEventListener("submit", (e) => {
-			if (!confirm(f.dataset.confirm)) e.preventDefault();
-		});
-	}
 </script>

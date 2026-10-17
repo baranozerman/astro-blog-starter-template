@@ -1,6 +1,6 @@
 ---
 import Portal from "../../../../layouts/Portal.astro";
-import { audit, parseId, type Folder } from "../../../../lib/portal";
+import { audit, parseId, subtreeIds, type Folder } from "../../../../lib/portal";
 import { StorageError, deleteStored } from "../../../../lib/storage";
 
 export const prerender = false;
@@ -10,9 +10,13 @@ const { DB } = env;
 const admin = Astro.locals.user!;
 const folderId = parseId(Astro.params.id);
 const folder = folderId
-	? await DB.prepare("SELECT id, name, description FROM folders WHERE id = ?").bind(folderId).first<Folder>()
+	? await DB.prepare("SELECT * FROM folders WHERE id = ?").bind(folderId).first<Folder>()
 	: null;
 if (!folder) return Astro.redirect("/portal/admin");
+// Access is managed on top-level folders; subfolders are handled in the file manager.
+if (folder.parent_id !== null) return Astro.redirect(`/portal/folders/${folder.id}`);
+const treeIds = await subtreeIds(DB, folder.id);
+const inTree = treeIds.map(() => "?").join(",");
 const here = `/portal/admin/folders/${folder.id}`;
 
 if (Astro.request.method === "POST") {
@@ -48,8 +52,8 @@ if (Astro.request.method === "POST") {
 	}
 
 	if (action === "delete") {
-		const { results } = await DB.prepare("SELECT r2_key FROM files WHERE folder_id = ?")
-			.bind(folder.id)
+		const { results } = await DB.prepare(`SELECT r2_key FROM files WHERE folder_id IN (${inTree})`)
+			.bind(...treeIds)
 			.all<{ r2_key: string }>();
 		try {
 			await deleteStored(env, results.map((r) => r.r2_key));
@@ -61,6 +65,8 @@ if (Astro.request.method === "POST") {
 			throw e;
 		}
 		await DB.batch([
+			DB.prepare(`DELETE FROM files WHERE folder_id IN (${inTree})`).bind(...treeIds),
+			// Subfolders go with it (ON DELETE CASCADE on parent_id).
 			DB.prepare("DELETE FROM folders WHERE id = ?").bind(folder.id),
 			audit(DB, admin.id, "folder_delete", folder.name),
 		]);
@@ -77,8 +83,8 @@ const { results: customers } = await DB.prepare(
 )
 	.bind(folder.id)
 	.all<{ id: number; name: string; company: string; email: string; active: number; can_read: number; can_upload: number }>();
-const fileCount = await DB.prepare("SELECT COUNT(*) AS n FROM files WHERE folder_id = ?")
-	.bind(folder.id)
+const fileCount = await DB.prepare(`SELECT COUNT(*) AS n FROM files WHERE folder_id IN (${inTree})`)
+	.bind(...treeIds)
 	.first<number>("n");
 ---
 
@@ -87,7 +93,7 @@ const fileCount = await DB.prepare("SELECT COUNT(*) AS n FROM files WHERE folder
 		<div>
 			<div class="breadcrumb"><a href="/portal/admin">Yönetim</a> / Klasörler /</div>
 			<h1>{folder.name}</h1>
-			<p class="muted">{fileCount} dosya</p>
+			<p class="lead-light">{fileCount} dosya{treeIds.length > 1 && ` · ${treeIds.length - 1} alt klasör`}</p>
 		</div>
 		<a class="btn secondary" href={`/portal/folders/${folder.id}`}>Dosyaları aç</a>
 	</div>
@@ -153,7 +159,7 @@ const fileCount = await DB.prepare("SELECT COUNT(*) AS n FROM files WHERE folder
 		<h2>Klasörü sil</h2>
 		<form method="post" onsubmit="return confirm('Klasör ve içindeki TÜM dosyalar kalıcı olarak silinsin mi?')">
 			<input type="hidden" name="action" value="delete" />
-			<p class="hint">Klasördeki {fileCount} dosya da kalıcı olarak silinir.</p>
+			<p class="hint">Alt klasörler ve içindeki {fileCount} dosya da kalıcı olarak silinir.</p>
 			<button type="submit" class="btn danger">Klasörü sil</button>
 		</form>
 	</div>
