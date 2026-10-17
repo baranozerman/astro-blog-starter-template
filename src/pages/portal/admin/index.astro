@@ -1,7 +1,8 @@
 ---
 import Portal from "../../../layouts/Portal.astro";
 import { hashPassword, passwordProblem } from "../../../lib/auth";
-import { audit, formatDate } from "../../../lib/portal";
+import Icon from "../../../components/portal/Icon.astro";
+import { audit, formatBytes, formatDate } from "../../../lib/portal";
 
 export const prerender = false;
 
@@ -45,7 +46,7 @@ if (Astro.request.method === "POST") {
 	}
 }
 
-const [users, folders, activity] = await DB.batch<any>([
+const [users, folders, activity, totals] = await DB.batch<any>([
 	DB.prepare(
 		`SELECT u.id, u.email, u.name, u.company, u.role, u.active, u.locked_until,
 		        (SELECT COUNT(*) FROM permissions p WHERE p.user_id = u.id AND (p.can_read = 1 OR p.can_upload = 1)) AS folder_count
@@ -62,7 +63,15 @@ const [users, folders, activity] = await DB.batch<any>([
 		 FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
 		 ORDER BY a.id DESC LIMIT 50`,
 	),
+	DB.prepare("SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files"),
 ]);
+const customerCount = users.results.filter((u: any) => u.role === "customer").length;
+const stats = [
+	{ icon: "users" as const, value: customerCount, label: "Müşteri" },
+	{ icon: "folder" as const, value: folders.results.length, label: "Klasör" },
+	{ icon: "file" as const, value: totals.results[0].files, label: "Dosya" },
+	{ icon: "database" as const, value: formatBytes(totals.results[0].bytes), label: "Toplam boyut" },
+];
 
 const ACTIONS: Record<string, string> = {
 	login: "Giriş",
@@ -91,6 +100,22 @@ const now = Math.floor(Date.now() / 1000);
 		</div>
 	</div>
 
+	<div class="stats">
+		{
+			stats.map((s) => (
+				<div class="stat">
+					<span class="stat-icon">
+						<Icon name={s.icon} size={20} />
+					</span>
+					<div>
+						<strong>{s.value}</strong>
+						<span>{s.label}</span>
+					</div>
+				</div>
+			))
+		}
+	</div>
+
 	<div class="grid-2">
 		<div class="panel">
 			<h2>Yeni kullanıcı</h2>
@@ -115,7 +140,7 @@ const now = Math.floor(Date.now() / 1000);
 			</form>
 		</div>
 
-		<div class="panel">
+		<div class="panel" id="yeni-klasor">
 			<h2>Yeni klasör</h2>
 			<form method="post" class="stack">
 				<input type="hidden" name="action" value="create_folder" />

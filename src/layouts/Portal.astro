@@ -1,12 +1,14 @@
 ---
 import "../styles/portal.css";
+import Icon from "../components/portal/Icon.astro";
+import Logo from "../components/portal/Logo.astro";
 import { MESSAGES } from "../lib/portal";
 
 interface Props {
 	title: string;
 	/** Inline error rendered above the page content (e.g. form validation). */
 	error?: string;
-	/** Centered single-card layout used by login and setup. */
+	/** Split-screen layout without navigation, used by login and setup. */
 	bare?: boolean;
 }
 
@@ -15,72 +17,126 @@ const user = Astro.locals.user;
 const path = Astro.url.pathname;
 const ok = MESSAGES[Astro.url.searchParams.get("ok") ?? ""];
 const err = error || MESSAGES[Astro.url.searchParams.get("err") ?? ""];
-const isActive = (href: string) =>
-	href === "/portal" ? path === "/portal" || path.startsWith("/portal/folders") : path.startsWith(href);
+
+const nav = [
+	{ href: "/portal", label: "Dosyalar", icon: "folder" as const, active: path === "/portal" || path.startsWith("/portal/folders") },
+	...(user?.role === "admin"
+		? [{ href: "/portal/admin", label: "Yönetim", icon: "settings" as const, active: path.startsWith("/portal/admin") }]
+		: []),
+	{ href: "/portal/account", label: "Hesabım", icon: "user" as const, active: path.startsWith("/portal/account") },
+];
+const initials = (user?.name ?? "")
+	.split(/\s+/)
+	.filter(Boolean)
+	.slice(0, 2)
+	.map((w) => w[0]!.toLocaleUpperCase("tr-TR"))
+	.join("");
 ---
 
 <!doctype html>
 <html lang="tr">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="robots" content="noindex, nofollow" />
-		<title>{title} · Prodinox Müşteri Portalı</title>
+		<meta name="theme-color" content="#0e1a2b" />
+		<link rel="icon" type="image/svg+xml" href="/portal-icon.svg" />
+		<link rel="apple-touch-icon" href="/portal-icon.svg" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+		<title>{title} · Prodinox</title>
 	</head>
-	<body class={bare ? "bare" : ""}>
+	<body class={bare ? "bare" : "app"}>
 		{
-			!bare && user && (
-				<header class="topbar">
-					<div class="wrap topbar-inner">
-						<a class="brand" href="/portal">
-							<span class="brand-mark">P</span>
-							<span>
-								PRODINOX <small>Müşteri Portalı</small>
-							</span>
-						</a>
-						<nav>
-							<a href="/portal" class:list={{ active: isActive("/portal") }}>
-								Dosyalar
-							</a>
-							{user.role === "admin" && (
-								<a href="/portal/admin" class:list={{ active: isActive("/portal/admin") }}>
-									Yönetim
+			bare ? (
+				<div class="auth">
+					<aside class="auth-brand">
+						<Logo tone="light" />
+						<div class="auth-brand-copy">
+							<h1>Proje dosyalarınız, tek ve güvenli bir yerde.</h1>
+							<p>Teknik çizimler, teklifler ve belgeler için Prodinox ile müşterilerimiz arasındaki ortak çalışma alanı.</p>
+						</div>
+						<ul class="auth-points">
+							<li><Icon name="lock" /> Size özel, izinli erişim</li>
+							<li><Icon name="upload" /> Dosya yükleme ve paylaşma</li>
+							<li><Icon name="shield" /> Tüm işlemler kayıt altında</li>
+						</ul>
+					</aside>
+					<main class="auth-main">
+						<div class="auth-card">
+							<div class="auth-logo-mobile"><Logo /></div>
+							{ok && <p class="flash ok"><Icon name="check" />{ok}</p>}
+							{err && <p class="flash err"><Icon name="alert" />{err}</p>}
+							<slot />
+						</div>
+						<p class="auth-foot">© {new Date().getFullYear()} Prodinox</p>
+					</main>
+				</div>
+			) : (
+				<div class="shell">
+					<aside class="sidebar">
+						<a class="sidebar-logo" href="/portal"><Logo tone="light" /></a>
+						<nav class="sidebar-nav">
+							{nav.map((item) => (
+								<a href={item.href} class:list={{ active: item.active }}>
+									<Icon name={item.icon} />
+									{item.label}
 								</a>
-							)}
-							<a href="/portal/account" class:list={{ active: isActive("/portal/account") }}>
-								Hesabım
-							</a>
-							<form method="post" action="/portal/logout">
-								<button type="submit" class="link">
-									Çıkış
-								</button>
-							</form>
+							))}
 						</nav>
-					</div>
-				</header>
+						{user && (
+							<div class="sidebar-user">
+								<span class="avatar">{initials}</span>
+								<span class="sidebar-user-text">
+									<strong>{user.name}</strong>
+									<small>{user.company || user.email}</small>
+								</span>
+								<form method="post" action="/portal/logout">
+									<button type="submit" class="icon-btn" title="Çıkış yap" aria-label="Çıkış yap">
+										<Icon name="logout" />
+									</button>
+								</form>
+							</div>
+						)}
+					</aside>
+
+					<header class="mobile-top">
+						<a href="/portal"><Logo /></a>
+						<form method="post" action="/portal/logout">
+							<button type="submit" class="icon-btn" aria-label="Çıkış yap"><Icon name="logout" /></button>
+						</form>
+					</header>
+
+					<main class="content">
+						{ok && <p class="flash ok" data-autohide><Icon name="check" />{ok}</p>}
+						{err && <p class="flash err"><Icon name="alert" />{err}</p>}
+						<slot />
+					</main>
+
+					<nav class="tabbar">
+						{nav.map((item) => (
+							<a href={item.href} class:list={{ active: item.active }}>
+								<Icon name={item.icon} size={22} />
+								<span>{item.label}</span>
+							</a>
+						))}
+					</nav>
+				</div>
 			)
 		}
-		<main class={bare ? "card-center" : "wrap page"}>
-			{
-				bare && (
-					<div class="brand brand-lg">
-						<span class="brand-mark">P</span>
-						<span>
-							PRODINOX <small>Müşteri Portalı</small>
-						</span>
-					</div>
-				)
+		<script>
+			// Fade out success messages after a few seconds.
+			for (const el of document.querySelectorAll<HTMLElement>("[data-autohide]")) {
+				setTimeout(() => el.classList.add("hide"), 4000);
 			}
-			{ok && <p class="flash ok">{ok}</p>}
-			{err && <p class="flash err">{err}</p>}
-			<slot />
-		</main>
-		{
-			!bare && user && (
-				<footer class="wrap footer">
-					{user.name} · {user.company || user.email}
-				</footer>
-			)
-		}
+			// Drop ?ok= / ?err= from the address bar so a refresh doesn't repeat the message.
+			const url = new URL(location.href);
+			if (url.searchParams.has("ok") || url.searchParams.has("err")) {
+				url.searchParams.delete("ok");
+				url.searchParams.delete("err");
+				history.replaceState(null, "", url);
+			}
+		</script>
 	</body>
 </html>

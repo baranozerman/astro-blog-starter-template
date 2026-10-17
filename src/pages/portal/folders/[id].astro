@@ -1,12 +1,15 @@
 ---
 import Portal from "../../../layouts/Portal.astro";
+import Icon from "../../../components/portal/Icon.astro";
 import {
 	INLINE_TYPES,
 	MAX_UPLOAD_BYTES,
 	audit,
 	cleanFileName,
+	fileKind,
 	formatBytes,
 	formatDate,
+	formatRelative,
 	getFolderAccess,
 	parseId,
 	type FileRow,
@@ -97,30 +100,48 @@ const { results: files } = await DB.prepare(
 )
 	.bind(...(canRead ? [folder.id] : [folder.id, user.id]))
 	.all<FileRow & { uploader: string | null }>();
+const maxMb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
 ---
 
 <Portal title={folder.name}>
 	<div class="page-head">
 		<div>
-			<div class="breadcrumb"><a href="/portal">Dosyalar</a> /</div>
+			<div class="breadcrumb">
+				<a href="/portal">Dosyalar</a>
+				<Icon name="chevron" size={14} />
+			</div>
 			<h1>{folder.name}</h1>
 			{folder.description && <p class="muted">{folder.description}</p>}
 		</div>
-		{isAdmin && <a class="btn secondary" href={`/portal/admin/folders/${folder.id}`}>Klasör ayarları</a>}
+		{
+			isAdmin && (
+				<a class="btn secondary" href={`/portal/admin/folders/${folder.id}`}>
+					<Icon name="settings" /> Klasör ayarları
+				</a>
+			)
+		}
 	</div>
 
 	{
 		canUpload && (
 			<div class="panel">
-				<h2>Dosya yükle</h2>
-				<form method="post" enctype="multipart/form-data" class="stack">
+				<form method="post" enctype="multipart/form-data" id="upload-form">
 					<input type="hidden" name="action" value="upload" />
-					<input type="file" name="files" multiple required />
-					<div>
-						<button type="submit" class="btn">Yükle</button>
-						<span class="hint">
-							&nbsp;Tek seferde toplam en fazla {Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.
-						</span>
+					<label class="dropzone" id="dropzone">
+						<Icon name="upload" size={30} />
+						<strong>Dosyaları sürükleyip bırakın veya seçmek için dokunun</strong>
+						<span class="hint">Tek seferde toplam en fazla {maxMb} MB</span>
+						<input type="file" name="files" multiple required id="file-input" />
+					</label>
+					<ul class="selected" id="selected" hidden />
+					<div class="upload-actions" id="upload-actions" hidden>
+						<button type="submit" class="btn" id="upload-btn">
+							<Icon name="upload" /> Yükle
+						</button>
+						<div class="progress" id="progress" hidden>
+							<div />
+						</div>
+						<span class="hint" id="upload-status" />
 					</div>
 				</form>
 			</div>
@@ -128,56 +149,193 @@ const { results: files } = await DB.prepare(
 	}
 
 	<div class="panel">
-		<h2>{canRead ? "Dosyalar" : "Yüklediğiniz dosyalar"}</h2>
+		<div class="panel-head">
+			<h2>
+				{canRead ? "Dosyalar" : "Yüklediğiniz dosyalar"} <span class="badge gray">{files.length}</span>
+			</h2>
+			{
+				files.length > 5 && (
+					<div class="search">
+						<Icon name="search" size={16} />
+						<input type="search" id="file-search" placeholder="Dosya ara…" aria-label="Dosya ara" />
+					</div>
+				)
+			}
+		</div>
 		{
 			files.length === 0 ? (
-				<p class="empty">Bu klasörde henüz dosya yok.</p>
+				<div class="empty">
+					<Icon name="file" size={36} />
+					<span>Bu klasörde henüz dosya yok.</span>
+				</div>
 			) : (
-				<div class="table-wrap">
-					<table>
-						<thead>
-							<tr>
-								<th>Ad</th>
-								<th>Boyut</th>
-								<th>Yükleyen</th>
-								<th>Tarih</th>
-								<th />
-							</tr>
-						</thead>
-						<tbody>
-							{files.map((f) => (
-								<tr>
-									<td>
-										<a href={`/portal/files/${f.id}`}>{f.name}</a>
-									</td>
-									<td>{formatBytes(f.size)}</td>
-									<td>{f.uploader ?? "—"}</td>
-									<td>{formatDate(f.created_at)}</td>
-									<td class="actions">
-										{INLINE_TYPES.has(f.content_type) && (
-											<a class="btn small secondary" href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener">
-												Görüntüle
-											</a>
-										)}{" "}
-										<a class="btn small secondary" href={`/portal/files/${f.id}`}>
-											İndir
-										</a>{" "}
-										{(isAdmin || (canUpload && f.uploaded_by === user.id)) && (
-											<form method="post" onsubmit="return confirm('Bu dosya silinsin mi?')">
-												<input type="hidden" name="action" value="delete" />
-												<input type="hidden" name="file_id" value={f.id} />
-												<button type="submit" class="btn small danger">
-													Sil
-												</button>
-											</form>
-										)}
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
+				<div class="files" id="files">
+					<div class="file-row head">
+						<span>Ad</span>
+						<span>Boyut</span>
+						<span>Yükleyen</span>
+						<span>Tarih</span>
+						<span />
+					</div>
+					{files.map((f) => {
+						const kind = fileKind(f.name);
+						const canDelete = isAdmin || (canUpload && f.uploaded_by === user.id);
+						return (
+							<div class="file-row" data-name={f.name.toLocaleLowerCase("tr-TR")}>
+								<div class="file-name">
+									<span class:list={["file-type", kind.group]}>{kind.label}</span>
+									<div>
+										<a href={`/portal/files/${f.id}`} title={f.name}>
+											{f.name}
+										</a>
+										<span class="file-sub">
+											{formatBytes(f.size)} · {formatRelative(f.created_at)}
+											{f.uploader && ` · ${f.uploader}`}
+										</span>
+									</div>
+								</div>
+								<span class="file-meta">{formatBytes(f.size)}</span>
+								<span class="file-meta">{f.uploader ?? "—"}</span>
+								<span class="file-meta" title={formatDate(f.created_at)}>
+									{formatRelative(f.created_at)}
+								</span>
+								<div class="file-actions">
+									{INLINE_TYPES.has(f.content_type) && (
+										<a
+											class="btn small secondary icon-only"
+											href={`/portal/files/${f.id}?inline`}
+											target="_blank"
+											rel="noopener"
+											title="Görüntüle"
+											aria-label={`${f.name} görüntüle`}
+										>
+											<Icon name="eye" size={16} />
+										</a>
+									)}
+									<a
+										class="btn small secondary icon-only"
+										href={`/portal/files/${f.id}`}
+										title="İndir"
+										aria-label={`${f.name} indir`}
+									>
+										<Icon name="download" size={16} />
+									</a>
+									{canDelete && (
+										<form method="post" data-confirm="Bu dosya silinsin mi?">
+											<input type="hidden" name="action" value="delete" />
+											<input type="hidden" name="file_id" value={f.id} />
+											<button
+												type="submit"
+												class="btn small danger icon-only"
+												title="Sil"
+												aria-label={`${f.name} sil`}
+											>
+												<Icon name="trash" size={16} />
+											</button>
+										</form>
+									)}
+								</div>
+							</div>
+						);
+					})}
 				</div>
 			)
 		}
 	</div>
 </Portal>
+
+<script define:vars={{ maxBytes: MAX_UPLOAD_BYTES }}>
+	const form = document.getElementById("upload-form");
+	const input = document.getElementById("file-input");
+	const dropzone = document.getElementById("dropzone");
+	const list = document.getElementById("selected");
+	const actions = document.getElementById("upload-actions");
+	const button = document.getElementById("upload-btn");
+	const progress = document.getElementById("progress");
+	const status = document.getElementById("upload-status");
+
+	const fmt = (n) =>
+		n < 1024 * 1024
+			? `${Math.max(1, Math.round(n / 1024))} KB`
+			: `${(n / 1024 / 1024).toLocaleString("tr-TR", { maximumFractionDigits: 1 })} MB`;
+
+	function showSelection() {
+		const files = [...input.files];
+		const total = files.reduce((sum, f) => sum + f.size, 0);
+		list.replaceChildren(
+			...files.map((f) => {
+				const li = document.createElement("li");
+				const name = document.createElement("span");
+				const size = document.createElement("span");
+				name.textContent = f.name;
+				size.textContent = fmt(f.size);
+				size.className = "hint";
+				li.append(name, size);
+				return li;
+			}),
+		);
+		list.hidden = actions.hidden = files.length === 0;
+		const tooBig = total > maxBytes;
+		button.disabled = tooBig;
+		status.textContent = tooBig
+			? `Toplam ${fmt(total)}: sınır ${fmt(maxBytes)}. Lütfen daha az dosya seçin.`
+			: `${files.length} dosya, toplam ${fmt(total)}`;
+	}
+
+	if (form) {
+		input.addEventListener("change", showSelection);
+		for (const type of ["dragenter", "dragover"]) {
+			dropzone.addEventListener(type, (e) => {
+				e.preventDefault();
+				dropzone.classList.add("drag");
+			});
+		}
+		for (const type of ["dragleave", "drop"]) {
+			dropzone.addEventListener(type, () => dropzone.classList.remove("drag"));
+		}
+		dropzone.addEventListener("drop", (e) => {
+			e.preventDefault();
+			if (e.dataTransfer?.files.length) {
+				input.files = e.dataTransfer.files;
+				showSelection();
+			}
+		});
+
+		// Upload with a progress bar; the server's redirect tells us the outcome.
+		form.addEventListener("submit", (e) => {
+			if (!input.files.length) return;
+			e.preventDefault();
+			const xhr = new XMLHttpRequest();
+			xhr.open("POST", location.pathname);
+			xhr.upload.addEventListener("progress", (ev) => {
+				if (!ev.lengthComputable) return;
+				const pct = Math.round((ev.loaded / ev.total) * 100);
+				progress.firstElementChild.style.width = `${pct}%`;
+				status.textContent = pct < 100 ? `Yükleniyor… %${pct}` : "İşleniyor…";
+			});
+			xhr.addEventListener("load", () => location.assign(xhr.responseURL || location.pathname));
+			xhr.addEventListener("error", () => {
+				status.textContent = "Bağlantı hatası. Lütfen tekrar deneyin.";
+				button.disabled = false;
+				progress.hidden = true;
+			});
+			button.disabled = true;
+			progress.hidden = false;
+			xhr.send(new FormData(form));
+		});
+	}
+
+	const search = document.getElementById("file-search");
+	search?.addEventListener("input", () => {
+		const q = search.value.trim().toLocaleLowerCase("tr-TR");
+		for (const row of document.querySelectorAll("#files .file-row[data-name]")) {
+			row.hidden = q !== "" && !row.dataset.name.includes(q);
+		}
+	});
+
+	for (const f of document.querySelectorAll("form[data-confirm]")) {
+		f.addEventListener("submit", (e) => {
+			if (!confirm(f.dataset.confirm)) e.preventDefault();
+		});
+	}
+</script>

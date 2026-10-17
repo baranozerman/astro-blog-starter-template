@@ -58,8 +58,9 @@ export function parseId(value: string | undefined | null) {
 }
 
 export async function listAccessibleFolders(db: D1Database, user: SessionUser) {
-	type Row = Folder & { can_read: number; can_upload: number; file_count: number };
-	const fileCount = "(SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS file_count";
+	type Row = Folder & { can_read: number; can_upload: number; file_count: number; last_upload: number | null };
+	const fileCount = `(SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS file_count,
+		(SELECT MAX(created_at) FROM files WHERE folder_id = f.id) AS last_upload`;
 	const query =
 		user.role === "admin"
 			? db.prepare(
@@ -125,6 +126,31 @@ export function formatBytes(bytes: number) {
 		unit++;
 	}
 	return `${value.toLocaleString("tr-TR", { maximumFractionDigits: 1 })} ${units[unit]}`;
+}
+
+/** Short label for the file-type badge plus a color group. */
+export function fileKind(name: string) {
+	const ext = (name.match(/\.([a-z0-9]{1,5})$/i)?.[1] ?? "").toLowerCase();
+	const groups: Record<string, string[]> = {
+		pdf: ["pdf"],
+		img: ["png", "jpg", "jpeg", "gif", "webp", "heic", "svg", "tif", "tiff"],
+		cad: ["dwg", "dxf", "step", "stp", "igs", "iges", "sldprt", "sldasm", "slddrw", "ipt", "iam", "x_t"],
+		sheet: ["xls", "xlsx", "xlsm", "csv", "ods"],
+		doc: ["doc", "docx", "odt", "rtf", "txt", "ppt", "pptx"],
+		zip: ["zip", "rar", "7z", "gz", "tar"],
+	};
+	const group = Object.keys(groups).find((g) => groups[g].includes(ext)) ?? "other";
+	return { label: ext ? ext.slice(0, 4).toUpperCase() : "DOSYA", group };
+}
+
+/** "3 gün önce" style relative time for recent dates, absolute date otherwise. */
+export function formatRelative(seconds: number) {
+	const diff = Math.floor(Date.now() / 1000) - seconds;
+	if (diff < 60) return "az önce";
+	if (diff < 3600) return `${Math.floor(diff / 60)} dk önce`;
+	if (diff < 86400) return `${Math.floor(diff / 3600)} saat önce`;
+	if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} gün önce`;
+	return new Date(seconds * 1000).toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "medium" });
 }
 
 export function formatDate(seconds: number) {

@@ -7,7 +7,7 @@ import cloudflare from "@astrojs/cloudflare";
 
 // https://astro.build/config
 export default defineConfig({
-	site: "https://example.com",
+	site: "https://prodinox.app",
 	integrations: [mdx(), sitemap()],
 	security: {
 		// Rejects cross-site form posts to the portal (CSRF protection).

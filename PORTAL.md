@@ -70,11 +70,11 @@ NAS internete port açılmadan **Cloudflare Tunnel** ile bağlanır ve **Cloudfl
    - Ağ: **host**
    - Komut: `tunnel --no-autoupdate run --token <TOKEN>`
    - Otomatik yeniden başlatma: açık
-4. Tunnel'da **Public Hostname → Add**: Subdomain `nas-portal`, Domain `ozerman.org`, Service `HTTP` → `localhost:5005`.
+4. Tunnel'da **Public Hostname → Add**: Subdomain `nas`, Domain `prodinox.app`, Service `HTTP` → `localhost:5005`.
 
 ### 3. Cloudflare Access (NAS adresine yalnızca portal erişebilsin)
 1. **Zero Trust → Access → Service Auth → Create Service Token**: ad `portal-worker`. **Client ID** ve **Client Secret**'ı kaydedin (Secret bir daha gösterilmez).
-2. **Zero Trust → Access → Applications → Add an application → Self-hosted**: domain `nas-portal.ozerman.org`.
+2. **Zero Trust → Access → Applications → Add an application → Self-hosted**: domain `nas.prodinox.app`.
 3. Politika: Action **Service Auth**, Include → **Service Token** → `portal-worker`.
 
 ### 4. Worker ayarları
@@ -82,7 +82,7 @@ Worker → **Settings → Variables and Secrets**:
 
 | Ad | Tür | Değer |
 | --- | --- | --- |
-| `WEBDAV_URL` | Text | `https://nas-portal.ozerman.org/portal` |
+| `WEBDAV_URL` | Text | `https://nas.prodinox.app/portal` |
 | `WEBDAV_USER` | Text | `portal-web` |
 | `WEBDAV_PASSWORD` | Secret | NAS kullanıcısının şifresi |
 | `CF_ACCESS_CLIENT_ID` | Secret | Service token Client ID |
