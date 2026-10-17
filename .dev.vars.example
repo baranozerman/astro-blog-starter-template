@@ -1,1 +1,6 @@
 SETUP_TOKEN=change-me-to-a-long-random-value
+MCP_SECRET=change-me-to-a-long-random-value
+COMPOSIO_API_KEY=
+COMPOSIO_USER_ID=default
+COMPOSIO_TOOLKITS=gmail,googlesheets
+COMPOSIO_TOOLS=
