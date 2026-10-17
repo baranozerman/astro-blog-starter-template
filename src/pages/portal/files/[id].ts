@@ -7,13 +7,15 @@ import {
 	parseId,
 	type FileRow,
 } from "../../../lib/portal";
+import { StorageError, resolveKey } from "../../../lib/storage";
 
 export const prerender = false;
 
 const notFound = () => new Response("Dosya bulunamadı.", { status: 404 });
 
 export const GET: APIRoute = async ({ params, locals, url }) => {
-	const { DB, FILES } = locals.runtime.env;
+	const env = locals.runtime.env;
+	const { DB } = env;
 	const user = locals.user!;
 	const fileId = parseId(params.id);
 	if (!fileId) return notFound();
@@ -24,7 +26,18 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 	// Upload-only users may still download what they uploaded themselves.
 	if (!access || !(access.canRead || file.uploaded_by === user.id)) return notFound();
 
-	const object = await FILES.get(file.r2_key);
+	let object;
+	try {
+		const { storage, key } = resolveKey(env, file.r2_key);
+		object = await storage.get(key);
+	} catch (e) {
+		if (!(e instanceof StorageError)) throw e;
+		console.error(e.message);
+		return new Response("Dosya sunucusuna şu anda ulaşılamıyor. Lütfen biraz sonra tekrar deneyin.", {
+			status: 503,
+			headers: { "Content-Type": "text/plain; charset=utf-8" },
+		});
+	}
 	if (!object) return notFound();
 
 	const inline = url.searchParams.has("inline") && INLINE_TYPES.has(file.content_type);
@@ -34,7 +47,7 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 
 	const headers = new Headers({
 		"Content-Type": inline ? file.content_type : "application/octet-stream",
-		"Content-Length": String(object.size),
+		"Content-Length": String(file.size),
 		"Content-Disposition": contentDisposition(inline ? "inline" : "attachment", file.name),
 		"X-Content-Type-Options": "nosniff",
 	});
@@ -42,5 +55,5 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 	if (file.content_type !== "application/pdf") {
 		headers.set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
 	}
-	return new Response(object.body, { headers });
+	return new Response(object, { headers });
 };

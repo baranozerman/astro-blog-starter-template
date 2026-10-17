@@ -42,8 +42,9 @@ if (Astro.request.method === "POST" && SETUP_TOKEN) {
 ---
 
 <Portal title="Kurulum" bare error={error}>
-	<div class="panel">
+	<div>
 		<h2>İlk yönetici hesabı</h2>
+		<p class="lead">Portalı yönetecek hesabı oluşturun. Bu sayfa yalnızca bir kez kullanılabilir.</p>
 		{
 			SETUP_TOKEN ? (
 				<form method="post" class="stack">
@@ -68,7 +69,7 @@ if (Astro.request.method === "POST" && SETUP_TOKEN) {
 						Şifre
 						<input type="password" name="password" required minlength="10" autocomplete="new-password" />
 					</label>
-					<button type="submit" class="btn">Yönetici oluştur</button>
+					<button type="submit" class="btn block">Yönetici oluştur</button>
 				</form>
 			) : (
 				<p>

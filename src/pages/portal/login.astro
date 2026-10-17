@@ -32,19 +32,18 @@ if (Astro.request.method === "POST") {
 ---
 
 <Portal title="Giriş" bare error={error}>
-	<div class="panel">
-		<h2>Giriş yap</h2>
-		<form method="post" class="stack">
-			<label>
-				E-posta
-				<input type="email" name="email" value={email} required autocomplete="username" autofocus />
-			</label>
-			<label>
-				Şifre
-				<input type="password" name="password" required autocomplete="current-password" />
-			</label>
-			<button type="submit" class="btn">Giriş</button>
-		</form>
-		<p class="hint">Hesabınız yoksa veya şifrenizi unuttuysanız Prodinox ile iletişime geçin.</p>
-	</div>
+	<h2>Hoş geldiniz</h2>
+	<p class="lead">Devam etmek için hesabınıza giriş yapın.</p>
+	<form method="post" class="stack">
+		<label>
+			E-posta
+			<input type="email" name="email" value={email} required autocomplete="username" autofocus />
+		</label>
+		<label>
+			Şifre
+			<input type="password" name="password" required autocomplete="current-password" />
+		</label>
+		<button type="submit" class="btn block">Giriş yap</button>
+	</form>
+	<p class="hint">Hesabınız yoksa veya şifrenizi unuttuysanız Prodinox ile iletişime geçin.</p>
 </Portal>

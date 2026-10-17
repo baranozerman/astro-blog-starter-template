@@ -1,0 +1,32 @@
+---
+// Placeholder brand mark until the official Prodinox logo is supplied.
+// To use the real logo, replace this markup with <img src="/logo.svg" alt="Prodinox" />.
+interface Props {
+	/** "light" for dark backgrounds, "dark" for light backgrounds. */
+	tone?: "light" | "dark";
+	subtitle?: boolean;
+}
+
+const { tone = "dark", subtitle = true } = Astro.props;
+// Unique per instance: a gradient defined inside a hidden copy (e.g. the mobile-hidden sidebar) would not paint.
+const gradientId = `steel-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+<span class:list={["logo", `logo-${tone}`]}>
+	<svg class="logo-mark" viewBox="0 0 40 40" width="36" height="36" aria-hidden="true">
+		<defs>
+			<linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+				<stop offset="0" stop-color="#e9edf2" />
+				<stop offset="0.45" stop-color="#aab4c1" />
+				<stop offset="0.55" stop-color="#c9d1db" />
+				<stop offset="1" stop-color="#7d8999" />
+			</linearGradient>
+		</defs>
+		<rect width="40" height="40" rx="10" fill={`url(#${gradientId})`} />
+		<path d="M14 29V11h7.5a5.5 5.5 0 0 1 0 11H14" fill="none" stroke="#0e1a2b" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" />
+	</svg>
+	<span class="logo-text">
+		<span class="logo-name">PRODINOX</span>
+		{subtitle && <span class="logo-sub">Müşteri Portalı</span>}
+	</span>
+</span>

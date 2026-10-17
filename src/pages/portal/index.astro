@@ -1,37 +1,67 @@
 ---
 import Portal from "../../layouts/Portal.astro";
-import { listAccessibleFolders } from "../../lib/portal";
+import Icon from "../../components/portal/Icon.astro";
+import { listAccessibleFolders, formatRelative } from "../../lib/portal";
 
 export const prerender = false;
 
 const user = Astro.locals.user!;
 const folders = await listAccessibleFolders(Astro.locals.runtime.env.DB, user);
+const firstName = user.name.split(/\s+/)[0];
 ---
 
 <Portal title="Dosyalar">
 	<div class="page-head">
 		<div>
-			<h1>Hoş geldiniz, {user.name}</h1>
-			<p class="muted">Erişim izniniz olan klasörler aşağıda listelenmiştir.</p>
+			<h1>Merhaba, {firstName}</h1>
+			<p class="muted">
+				{folders.length > 0 ? `Erişiminiz olan ${folders.length} klasör var.` : "Erişiminiz olan klasörler burada listelenir."}
+			</p>
 		</div>
-		{user.role === "admin" && <a class="btn secondary" href="/portal/admin">Klasör / kullanıcı yönet</a>}
+		{
+			user.role === "admin" && (
+				<a class="btn" href="/portal/admin#yeni-klasor">
+					<Icon name="plus" /> Yeni klasör
+				</a>
+			)
+		}
 	</div>
 
 	{
 		folders.length === 0 ? (
 			<div class="panel empty">
-				Henüz size atanmış bir klasör yok. Erişim için Prodinox ile iletişime geçin.
+				<Icon name="folder" size={40} />
+				<strong>Henüz size atanmış bir klasör yok</strong>
+				<span>Erişim için Prodinox ile iletişime geçin.</span>
 			</div>
 		) : (
 			<div class="cards">
 				{folders.map((f) => (
 					<a class="card" href={`/portal/folders/${f.id}`}>
-						<h3>{f.name}</h3>
-						<p>{f.description || " "}</p>
+						<div class="card-top">
+							<span class="folder-icon">
+								<Icon name="folder" size={22} />
+							</span>
+							<div>
+								<h3>{f.name}</h3>
+								{f.description && <p>{f.description}</p>}
+							</div>
+						</div>
 						<div class="badges">
-							{f.can_read ? <span class="badge">Görüntüleme</span> : null}
-							{f.can_upload ? <span class="badge">Yükleme</span> : null}
-							{f.can_read ? <span class="badge gray">{f.file_count} dosya</span> : null}
+							{f.can_read ? (
+								<span class="badge">
+									<Icon name="eye" size={13} /> Görüntüleme
+								</span>
+							) : null}
+							{f.can_upload ? (
+								<span class="badge green">
+									<Icon name="upload" size={13} /> Yükleme
+								</span>
+							) : null}
+						</div>
+						<div class="card-foot">
+							<span>{f.can_read ? `${f.file_count} dosya` : "Yalnızca yükleme"}</span>
+							<span>{f.can_read && f.last_upload ? formatRelative(f.last_upload) : ""}</span>
 						</div>
 					</a>
 				))}
