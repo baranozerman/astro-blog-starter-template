@@ -8,7 +8,11 @@ Cloudflare Workers üzerinde çalışır: **D1** (kullanıcılar, klasörler, iz
 - E-posta + şifre ile giriş (PBKDF2 ile hashlenmiş şifreler, HttpOnly oturum çerezi, 7 gün)
 - 5 hatalı denemede hesap 15 dakika kilitlenir
 - Klasör bazlı izinler: **Görüntüle/indir** ve/veya **Yükle**
+  - İzinler **ana klasörlere** verilir; alt klasörler bu izinleri devralır
   - Sadece "Yükle" izni olan müşteri, klasörde yalnızca kendi yüklediği dosyaları görür
+- Dosya yöneticisi: sınırsız alt klasör, yeniden adlandırma, taşıma, toplu seçim ile taşı/sil, arama, sürükle-bırak yükleme
+  - Yöneticiler her şeyi yönetir; müşteriler yalnızca kendi oluşturdukları klasör ve dosyaları (klasörleri yalnızca boşken silebilir)
+  - Veritabanı şema güncellemeleri (ör. alt klasör desteği) uygulama açılırken otomatik uygulanır (`src/lib/schema.ts`)
 - Yönetici paneli (`/portal/admin`): kullanıcı ve klasör oluşturma, izin verme, şifre sıfırlama, hesabı pasifleştirme, son etkinlikler (giriş, yükleme, indirme, silme)
 - Müşteriler kendi şifrelerini "Hesabım" sayfasından değiştirebilir
 - Çapraz site form gönderimleri engellenir (CSRF); dosyalar her zaman indirme olarak sunulur (PDF/görseller isteğe bağlı önizlenir)
@@ -94,6 +98,12 @@ Kaydettikten sonra portala bir test dosyası yükleyin; NAS'ta `portal/<klasör 
 - NAS veya ofis interneti kapalıyken NAS'taki dosyalar indirilemez, yükleme yapılamaz (kullanıcıya açıklayıcı bir mesaj gösterilir).
 - NAS'taki dosyaları elle **taşımayın veya yeniden adlandırmayın**; portal dosyayı bulamaz.
 - NAS'a elle kopyalanan dosyalar portalda görünmez; portaldan yüklenmelidir.
+
+## Görseller ve logo
+
+- Logo: `public/brand/` (sunumdaki logodan vektörleştirildi; `logo-h-*` yatay, `logo-*` dikey, `mark-*` yalnız simge)
+- Arka plan fotoğrafları: `public/backgrounds/` ve liste `src/lib/backdrops.ts`. Yeni fotoğraf eklemek için
+  `<ad>.jpg` (~2400px) ve `<ad>-1200.jpg` dosyalarını koyup listeye bir satır ekleyin.
 
 ## Sınırlar
 

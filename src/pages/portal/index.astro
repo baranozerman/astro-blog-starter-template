@@ -60,7 +60,10 @@ const firstName = user.name.split(/\s+/)[0];
 							) : null}
 						</div>
 						<div class="card-foot">
-							<span>{f.can_read ? `${f.file_count} dosya` : "Yalnızca yükleme"}</span>
+							<span>
+								{f.can_read ? `${f.file_count} dosya` : "Yalnızca yükleme"}
+								{f.folder_count > 0 && ` · ${f.folder_count} klasör`}
+							</span>
 							<span>{f.can_read && f.last_upload ? formatRelative(f.last_upload) : ""}</span>
 						</div>
 					</a>

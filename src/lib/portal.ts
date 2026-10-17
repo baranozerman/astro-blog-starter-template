@@ -17,10 +17,15 @@ export interface Folder {
 	id: number;
 	name: string;
 	description: string;
+	parent_id: number | null;
+	created_by: number | null;
 }
 
 export interface FolderAccess {
 	folder: Folder;
+	/** Breadcrumb from the top-level folder down to (and including) this one. */
+	path: { id: number; name: string }[];
+	rootId: number;
 	canRead: boolean;
 	canUpload: boolean;
 }
@@ -50,6 +55,12 @@ export const MESSAGES: Record<string, string> = {
 	exists: "Bu e-posta adresiyle kayıtlı bir kullanıcı zaten var.",
 	invalid: "Lütfen formdaki alanları kontrol edin.",
 	storage: "Dosya sunucusuna şu anda ulaşılamıyor. Lütfen biraz sonra tekrar deneyin.",
+	moved: "Taşındı.",
+	renamed: "Yeniden adlandırıldı.",
+	folder_created: "Klasör oluşturuldu.",
+	notempty: "Bu klasör boş değil. İçindekileri önce taşıyın veya silin.",
+	badmove: "Bir klasör kendi içine taşınamaz.",
+	noselection: "Lütfen en az bir öğe seçin.",
 };
 
 export function parseId(value: string | undefined | null) {
@@ -57,20 +68,43 @@ export function parseId(value: string | undefined | null) {
 	return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/** Top-level folders the user can open, with file counts over their whole subtree. */
 export async function listAccessibleFolders(db: D1Database, user: SessionUser) {
-	type Row = Folder & { can_read: number; can_upload: number; file_count: number; last_upload: number | null };
-	const fileCount = `(SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS file_count,
-		(SELECT MAX(created_at) FROM files WHERE folder_id = f.id) AS last_upload`;
+	type Row = Folder & {
+		can_read: number;
+		can_upload: number;
+		file_count: number;
+		folder_count: number;
+		last_upload: number | null;
+	};
+	const stats = `
+		WITH RECURSIVE tree(root_id, id) AS (
+			SELECT id, id FROM folders WHERE parent_id IS NULL
+			UNION ALL
+			SELECT tree.root_id, f.id FROM folders f JOIN tree ON f.parent_id = tree.id
+		),
+		stats AS (
+			SELECT tree.root_id,
+			       COUNT(DISTINCT files.id) AS file_count,
+			       COUNT(DISTINCT tree.id) - 1 AS folder_count,
+			       MAX(files.created_at) AS last_upload
+			FROM tree LEFT JOIN files ON files.folder_id = tree.id
+			GROUP BY tree.root_id
+		)`;
 	const query =
 		user.role === "admin"
 			? db.prepare(
-					`SELECT f.id, f.name, f.description, 1 AS can_read, 1 AS can_upload, ${fileCount}
-					 FROM folders f ORDER BY f.name COLLATE NOCASE`,
+					`${stats}
+					 SELECT f.*, 1 AS can_read, 1 AS can_upload, s.file_count, s.folder_count, s.last_upload
+					 FROM folders f JOIN stats s ON s.root_id = f.id
+					 ORDER BY f.name COLLATE NOCASE`,
 				)
 			: db
 					.prepare(
-						`SELECT f.id, f.name, f.description, p.can_read, p.can_upload, ${fileCount}
-						 FROM folders f JOIN permissions p ON p.folder_id = f.id
+						`${stats}
+						 SELECT f.*, p.can_read, p.can_upload, s.file_count, s.folder_count, s.last_upload
+						 FROM folders f JOIN stats s ON s.root_id = f.id
+						 JOIN permissions p ON p.folder_id = f.id
 						 WHERE p.user_id = ? AND (p.can_read = 1 OR p.can_upload = 1)
 						 ORDER BY f.name COLLATE NOCASE`,
 					)
@@ -78,24 +112,73 @@ export async function listAccessibleFolders(db: D1Database, user: SessionUser) {
 	return (await query.all<Row>()).results;
 }
 
+/** The folder plus its ancestors, top-level first. */
+export async function folderPath(db: D1Database, folderId: number) {
+	const { results } = await db
+		.prepare(
+			`WITH RECURSIVE anc(id, parent_id, depth) AS (
+				SELECT id, parent_id, 0 FROM folders WHERE id = ?
+				UNION ALL
+				SELECT f.id, f.parent_id, anc.depth + 1 FROM folders f JOIN anc ON f.id = anc.parent_id
+				WHERE anc.depth < 50
+			)
+			SELECT f.* FROM anc JOIN folders f ON f.id = anc.id ORDER BY anc.depth DESC`,
+		)
+		.bind(folderId)
+		.all<Folder>();
+	return results;
+}
+
+/** Access to a folder is decided by the permissions on its top-level folder. */
 export async function getFolderAccess(
 	db: D1Database,
 	user: SessionUser,
 	folderId: number,
 ): Promise<FolderAccess | null> {
-	const folder = await db
-		.prepare("SELECT id, name, description FROM folders WHERE id = ?")
-		.bind(folderId)
-		.first<Folder>();
-	if (!folder) return null;
-	if (user.role === "admin") return { folder, canRead: true, canUpload: true };
+	const chain = await folderPath(db, folderId);
+	if (chain.length === 0) return null;
+	const folder = chain[chain.length - 1];
+	const rootId = chain[0].id;
+	const path = chain.map((f) => ({ id: f.id, name: f.name }));
+	if (user.role === "admin") return { folder, path, rootId, canRead: true, canUpload: true };
 
 	const perm = await db
 		.prepare("SELECT can_read, can_upload FROM permissions WHERE user_id = ? AND folder_id = ?")
-		.bind(user.id, folderId)
+		.bind(user.id, rootId)
 		.first<{ can_read: number; can_upload: number }>();
 	if (!perm || (!perm.can_read && !perm.can_upload)) return null;
-	return { folder, canRead: perm.can_read === 1, canUpload: perm.can_upload === 1 };
+	return { folder, path, rootId, canRead: perm.can_read === 1, canUpload: perm.can_upload === 1 };
+}
+
+/** Ids of a folder and everything below it. */
+export async function subtreeIds(db: D1Database, folderId: number) {
+	const { results } = await db
+		.prepare(
+			`WITH RECURSIVE tree(id) AS (
+				SELECT ? UNION ALL SELECT f.id FROM folders f JOIN tree ON f.parent_id = tree.id
+			) SELECT id FROM tree`,
+		)
+		.bind(folderId)
+		.all<{ id: number }>();
+	return results.map((r) => r.id);
+}
+
+/** Every folder under the given top-level folders, labelled with its full path (for "move to"). */
+export async function folderTree(db: D1Database, rootIds: number[] | "all") {
+	const where = rootIds === "all" ? "parent_id IS NULL" : `id IN (${rootIds.map(() => "?").join(",") || "NULL"})`;
+	const { results } = await db
+		.prepare(
+			`WITH RECURSIVE t(id, path, depth) AS (
+				SELECT id, name, 0 FROM folders WHERE ${where}
+				UNION ALL
+				SELECT f.id, t.path || ' / ' || f.name, t.depth + 1 FROM folders f JOIN t ON f.parent_id = t.id
+				WHERE t.depth < 50
+			)
+			SELECT id, path, depth FROM t ORDER BY path COLLATE NOCASE`,
+		)
+		.bind(...(rootIds === "all" ? [] : rootIds))
+		.all<{ id: number; path: string; depth: number }>();
+	return results;
 }
 
 export function audit(db: D1Database, userId: number | null, action: string, detail = "") {
