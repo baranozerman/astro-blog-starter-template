@@ -6,6 +6,7 @@ import { audit, safeNext } from "../../lib/portal";
 export const prerender = false;
 
 const { DB } = Astro.locals.runtime.env;
+const { t } = Astro.locals;
 const next = safeNext(Astro.url.searchParams.get("next"));
 if (Astro.locals.user) return Astro.redirect(next);
 
@@ -24,26 +25,23 @@ if (Astro.request.method === "POST") {
 		await audit(DB, result.userId, "login").run();
 		return Astro.redirect(next);
 	}
-	error =
-		result.error === "locked"
-			? "Çok fazla hatalı deneme. Lütfen 15 dakika sonra tekrar deneyin."
-			: "E-posta veya şifre hatalı.";
+	error = result.error === "locked" ? t("err.locked") : t("err.bad_login");
 }
 ---
 
-<Portal title="Giriş" bare error={error}>
-	<h2>Hoş geldiniz</h2>
-	<p class="lead">Devam etmek için hesabınıza giriş yapın.</p>
+<Portal title={t("login.title")} bare error={error}>
+	<h2>{t("login.heading")}</h2>
+	<p class="lead">{t("login.lead")}</p>
 	<form method="post" class="stack">
 		<label>
-			E-posta
+			{t("common.email")}
 			<input type="email" name="email" value={email} required autocomplete="username" autofocus />
 		</label>
 		<label>
-			Şifre
+			{t("common.password")}
 			<input type="password" name="password" required autocomplete="current-password" />
 		</label>
-		<button type="submit" class="btn block">Giriş yap</button>
+		<button type="submit" class="btn block">{t("login.submit")}</button>
 	</form>
-	<p class="hint">Hesabınız yoksa veya şifrenizi unuttuysanız Prodinox ile iletişime geçin.</p>
+	<p class="hint">{t("login.help")}</p>
 </Portal>

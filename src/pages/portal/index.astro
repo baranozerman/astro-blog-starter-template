@@ -6,22 +6,23 @@ import { listAccessibleFolders, formatRelative } from "../../lib/portal";
 export const prerender = false;
 
 const user = Astro.locals.user!;
+const { lang, t } = Astro.locals;
 const folders = await listAccessibleFolders(Astro.locals.runtime.env.DB, user);
 const firstName = user.name.split(/\s+/)[0];
 ---
 
-<Portal title="Dosyalar">
+<Portal title={t("home.title")}>
 	<div class="page-head">
 		<div>
-			<h1>Merhaba, {firstName}</h1>
+			<h1>{t("home.hello", { name: firstName })}</h1>
 			<p class="muted">
-				{folders.length > 0 ? `Erişiminiz olan ${folders.length} klasör var.` : "Erişiminiz olan klasörler burada listelenir."}
+				{folders.length > 0 ? t("home.count", { n: folders.length }) : t("home.count_none")}
 			</p>
 		</div>
 		{
 			user.role === "admin" && (
 				<a class="btn" href="/portal/admin#yeni-klasor">
-					<Icon name="plus" /> Yeni klasör
+					<Icon name="plus" /> {t("home.new_folder")}
 				</a>
 			)
 		}
@@ -31,8 +32,8 @@ const firstName = user.name.split(/\s+/)[0];
 		folders.length === 0 ? (
 			<div class="panel empty">
 				<Icon name="folder" size={40} />
-				<strong>Henüz size atanmış bir klasör yok</strong>
-				<span>Erişim için Prodinox ile iletişime geçin.</span>
+				<strong>{t("home.empty_title")}</strong>
+				<span>{t("home.empty_body")}</span>
 			</div>
 		) : (
 			<div class="cards">
@@ -50,21 +51,21 @@ const firstName = user.name.split(/\s+/)[0];
 						<div class="badges">
 							{f.can_read ? (
 								<span class="badge">
-									<Icon name="eye" size={13} /> Görüntüleme
+									<Icon name="eye" size={13} /> {t("home.badge_view")}
 								</span>
 							) : null}
 							{f.can_upload ? (
 								<span class="badge green">
-									<Icon name="upload" size={13} /> Yükleme
+									<Icon name="upload" size={13} /> {t("home.badge_upload")}
 								</span>
 							) : null}
 						</div>
 						<div class="card-foot">
 							<span>
-								{f.can_read ? `${f.file_count} dosya` : "Yalnızca yükleme"}
-								{f.folder_count > 0 && ` · ${f.folder_count} klasör`}
+								{f.can_read ? t("common.files_n", { n: f.file_count }) : t("home.upload_only")}
+								{f.folder_count > 0 && ` · ${t("common.folders_n", { n: f.folder_count })}`}
 							</span>
-							<span>{f.can_read && f.last_upload ? formatRelative(f.last_upload) : ""}</span>
+							<span>{f.can_read && f.last_upload ? formatRelative(f.last_upload, lang, t) : ""}</span>
 						</div>
 					</a>
 				))}

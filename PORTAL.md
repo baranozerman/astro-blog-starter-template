@@ -15,6 +15,9 @@ Cloudflare Workers üzerinde çalışır: **D1** (kullanıcılar, klasörler, iz
   - Veritabanı şema güncellemeleri (ör. alt klasör desteği) uygulama açılırken otomatik uygulanır (`src/lib/schema.ts`)
 - Yönetici paneli (`/portal/admin`): kullanıcı ve klasör oluşturma, izin verme, şifre sıfırlama, hesabı pasifleştirme, son etkinlikler (giriş, yükleme, indirme, silme)
 - Müşteriler kendi şifrelerini "Hesabım" sayfasından değiştirebilir
+- **Türkçe / İngilizce arayüz:** üst menüde ve giriş ekranında TR | EN seçici; seçim tarayıcıda hatırlanır.
+  İlk ziyarette tarayıcı dili Türkçe ise Türkçe, değilse İngilizce açılır. Tüm metinler `src/lib/i18n.ts` içinde.
+- Giriş ekranında ve üst menüde prodinox.com.tr bağlantısı
 - Çapraz site form gönderimleri engellenir (CSRF); dosyalar her zaman indirme olarak sunulur (PDF/görseller isteğe bağlı önizlenir)
 
 ## Kurulum (Cloudflare)

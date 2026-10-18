@@ -3,11 +3,13 @@ import Portal from "../../../layouts/Portal.astro";
 import { hashPassword, passwordProblem } from "../../../lib/auth";
 import Icon from "../../../components/portal/Icon.astro";
 import { audit, formatBytes, formatDate } from "../../../lib/portal";
+import { isMessageKey } from "../../../lib/i18n";
 
 export const prerender = false;
 
 const { DB } = Astro.locals.runtime.env;
 const admin = Astro.locals.user!;
+const { lang, t } = Astro.locals;
 
 let error = "";
 if (Astro.request.method === "POST") {
@@ -20,7 +22,7 @@ if (Astro.request.method === "POST") {
 		const company = String(form.get("company") ?? "").trim();
 		const role = form.get("role") === "admin" ? "admin" : "customer";
 		const password = String(form.get("password") ?? "");
-		error = !email || !name ? "E-posta ve ad zorunludur." : (passwordProblem(password) ?? "");
+		error = !email || !name ? t("err.name_email_required") : passwordProblem(password, t);
 		if (!error) {
 			const exists = await DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
 			if (exists) return Astro.redirect("/portal/admin?err=exists");
@@ -73,36 +75,24 @@ const [users, folders, activity, totals] = await DB.batch<any>([
 ]);
 const customerCount = users.results.filter((u: any) => u.role === "customer").length;
 const stats = [
-	{ icon: "users" as const, value: customerCount, label: "Müşteri" },
-	{ icon: "folder" as const, value: folders.results.length, label: "Klasör" },
-	{ icon: "file" as const, value: totals.results[0].files, label: "Dosya" },
-	{ icon: "database" as const, value: formatBytes(totals.results[0].bytes), label: "Toplam boyut" },
+	{ icon: "users" as const, value: customerCount, label: t("admin.stat_customers") },
+	{ icon: "folder" as const, value: folders.results.length, label: t("admin.stat_folders") },
+	{ icon: "file" as const, value: totals.results[0].files, label: t("admin.stat_files") },
+	{ icon: "database" as const, value: formatBytes(totals.results[0].bytes, lang), label: t("admin.stat_size") },
 ];
 
-const ACTIONS: Record<string, string> = {
-	login: "Giriş",
-	setup: "Kurulum",
-	upload: "Yükleme",
-	download: "İndirme",
-	delete: "Dosya silme",
-	password_change: "Şifre değişikliği",
-	password_reset: "Şifre sıfırlama",
-	user_create: "Kullanıcı oluşturma",
-	user_update: "Kullanıcı güncelleme",
-	user_delete: "Kullanıcı silme",
-	folder_create: "Klasör oluşturma",
-	folder_update: "Klasör güncelleme",
-	folder_delete: "Klasör silme",
-	permissions: "İzin değişikliği",
+const actionLabel = (action: string) => {
+	const key = `action.${action}`;
+	return isMessageKey(key) ? t(key) : action;
 };
 const now = Math.floor(Date.now() / 1000);
 ---
 
-<Portal title="Yönetim" error={error}>
+<Portal title={t("admin.title")} error={error}>
 	<div class="page-head">
 		<div>
-			<h1>Yönetim</h1>
-			<p class="muted">Müşteri hesaplarını, klasörleri ve erişim izinlerini yönetin.</p>
+			<h1>{t("admin.title")}</h1>
+			<p class="muted">{t("admin.lead")}</p>
 		</div>
 	</div>
 
@@ -124,46 +114,46 @@ const now = Math.floor(Date.now() / 1000);
 
 	<div class="grid-2">
 		<div class="panel">
-			<h2>Yeni kullanıcı</h2>
+			<h2>{t("admin.new_user")}</h2>
 			<form method="post" class="stack">
 				<input type="hidden" name="action" value="create_user" />
-				<label>Ad Soyad <input type="text" name="name" required /></label>
-				<label>Şirket <input type="text" name="company" /></label>
-				<label>E-posta <input type="email" name="email" required autocomplete="off" /></label>
+				<label>{t("common.name")} <input type="text" name="name" required /></label>
+				<label>{t("common.company")} <input type="text" name="company" /></label>
+				<label>{t("common.email")} <input type="email" name="email" required autocomplete="off" /></label>
 				<label>
-					Geçici şifre
+					{t("admin.temp_password")}
 					<input type="text" name="password" required minlength="10" autocomplete="off" />
-					<span class="hint">En az 10 karakter. Kullanıcıya iletin; "Hesabım" sayfasından değiştirebilir.</span>
+					<span class="hint">{t("admin.temp_password_hint")}</span>
 				</label>
 				<label>
-					Rol
+					{t("common.role")}
 					<select name="role">
-						<option value="customer">Müşteri</option>
-						<option value="admin">Yönetici (tüm klasörlere tam erişim)</option>
+						<option value="customer">{t("common.customer")}</option>
+						<option value="admin">{t("admin.role_admin_full")}</option>
 					</select>
 				</label>
-				<div><button type="submit" class="btn">Kullanıcı oluştur</button></div>
+				<div><button type="submit" class="btn">{t("admin.create_user")}</button></div>
 			</form>
 		</div>
 
 		<div class="panel" id="yeni-klasor">
-			<h2>Yeni ana klasör</h2>
-			<p class="hint">Erişim izinleri ana klasörlere verilir; içindeki alt klasörler bu izinleri devralır. Alt klasörleri dosya yöneticisinden oluşturabilirsiniz.</p>
+			<h2>{t("admin.new_root")}</h2>
+			<p class="hint">{t("admin.new_root_hint")}</p>
 			<form method="post" class="stack">
 				<input type="hidden" name="action" value="create_folder" />
-				<label>Klasör adı <input type="text" name="name" required placeholder="Örn. ACME Ltd. – Teknik Çizimler" /></label>
-				<label>Açıklama <textarea name="description" rows="3"></textarea></label>
-				<div><button type="submit" class="btn">Klasör oluştur</button></div>
+				<label>{t("common.folder_name")} <input type="text" name="name" required placeholder={t("admin.folder_placeholder")} /></label>
+				<label>{t("common.description")} <textarea name="description" rows="3"></textarea></label>
+				<div><button type="submit" class="btn">{t("admin.create_folder")}</button></div>
 			</form>
 		</div>
 	</div>
 
 	<div class="panel">
-		<h2>Kullanıcılar ({users.results.length})</h2>
+		<h2>{t("admin.users_n", { n: users.results.length })}</h2>
 		<div class="table-wrap">
 			<table>
 				<thead>
-					<tr><th>Ad</th><th>Şirket</th><th>E-posta</th><th>Rol</th><th>Klasör</th><th /></tr>
+					<tr><th>{t("fm.col_name")}</th><th>{t("common.company")}</th><th>{t("common.email")}</th><th>{t("common.role")}</th><th>{t("admin.col_folders")}</th><th /></tr>
 				</thead>
 				<tbody>
 					{
@@ -171,14 +161,14 @@ const now = Math.floor(Date.now() / 1000);
 							<tr>
 								<td>
 									{u.name}{" "}
-									{!u.active && <span class="badge red">Pasif</span>}
-									{u.locked_until > now && <span class="badge red">Kilitli</span>}
+									{!u.active && <span class="badge red">{t("common.inactive")}</span>}
+									{u.locked_until > now && <span class="badge red">{t("common.locked")}</span>}
 								</td>
 								<td>{u.company}</td>
 								<td>{u.email}</td>
-								<td>{u.role === "admin" ? <span class="badge">Yönetici</span> : <span class="badge gray">Müşteri</span>}</td>
-								<td>{u.role === "admin" ? "Tümü" : u.folder_count}</td>
-								<td class="actions"><a class="btn small secondary" href={`/portal/admin/users/${u.id}`}>Düzenle</a></td>
+								<td>{u.role === "admin" ? <span class="badge">{t("common.admin")}</span> : <span class="badge gray">{t("common.customer")}</span>}</td>
+								<td>{u.role === "admin" ? t("admin.all") : u.folder_count}</td>
+								<td class="actions"><a class="btn small secondary" href={`/portal/admin/users/${u.id}`}>{t("admin.edit")}</a></td>
 							</tr>
 						))
 					}
@@ -188,24 +178,24 @@ const now = Math.floor(Date.now() / 1000);
 	</div>
 
 	<div class="panel">
-		<h2>Klasörler ({folders.results.length})</h2>
+		<h2>{t("admin.folders_n", { n: folders.results.length })}</h2>
 		{
 			folders.results.length === 0 ? (
-				<p class="empty">Henüz klasör yok.</p>
+				<p class="empty">{t("admin.no_folders")}</p>
 			) : (
 				<div class="table-wrap">
 					<table>
 						<thead>
-							<tr><th>Ad</th><th>Açıklama</th><th>Dosya</th><th>Müşteri</th><th /></tr>
+							<tr><th>{t("fm.col_name")}</th><th>{t("common.description")}</th><th>{t("admin.col_files")}</th><th>{t("admin.col_customers")}</th><th /></tr>
 						</thead>
 						<tbody>
 							{folders.results.map((f: any) => (
 								<tr>
 									<td><a href={`/portal/folders/${f.id}`}>{f.name}</a></td>
 									<td class="muted">{f.description}</td>
-									<td>{f.file_count}{f.sub_count > 0 && <span class="muted"> · {f.sub_count} alt klasör</span>}</td>
+									<td>{f.file_count}{f.sub_count > 0 && <span class="muted"> · {t("common.subfolders_n", { n: f.sub_count })}</span>}</td>
 									<td>{f.user_count}</td>
-									<td class="actions"><a class="btn small secondary" href={`/portal/admin/folders/${f.id}`}>Ayarlar</a></td>
+									<td class="actions"><a class="btn small secondary" href={`/portal/admin/folders/${f.id}`}>{t("admin.settings")}</a></td>
 								</tr>
 							))}
 						</tbody>
@@ -216,22 +206,22 @@ const now = Math.floor(Date.now() / 1000);
 	</div>
 
 	<div class="panel">
-		<h2>Son etkinlikler</h2>
+		<h2>{t("admin.activity")}</h2>
 		{
 			activity.results.length === 0 ? (
-				<p class="empty">Henüz etkinlik yok.</p>
+				<p class="empty">{t("admin.no_activity")}</p>
 			) : (
 				<div class="table-wrap">
 					<table>
 						<thead>
-							<tr><th>Tarih</th><th>Kullanıcı</th><th>İşlem</th><th>Detay</th></tr>
+							<tr><th>{t("admin.col_date")}</th><th>{t("admin.col_user")}</th><th>{t("admin.col_action")}</th><th>{t("admin.col_detail")}</th></tr>
 						</thead>
 						<tbody>
 							{activity.results.map((a: any) => (
 								<tr>
-									<td>{formatDate(a.created_at)}</td>
-									<td>{a.name ?? "(silinmiş)"}</td>
-									<td>{ACTIONS[a.action] ?? a.action}</td>
+									<td>{formatDate(a.created_at, lang)}</td>
+									<td>{a.name ?? t("admin.deleted_user")}</td>
+									<td>{actionLabel(a.action)}</td>
 									<td class="muted">{a.detail}</td>
 								</tr>
 							))}
