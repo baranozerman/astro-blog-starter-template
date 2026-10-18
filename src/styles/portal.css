@@ -203,6 +203,74 @@ body.app .backdrop::after {
 	color: var(--navy);
 }
 
+/* Link to the company website + language switch */
+.site-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	padding: 7px 12px;
+	border-radius: 999px;
+	color: rgba(255, 255, 255, 0.85);
+	font-size: 0.86rem;
+	font-weight: 500;
+	white-space: nowrap;
+	text-decoration: none !important;
+	transition: background 0.15s, color 0.15s;
+}
+
+.site-link:hover {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.site-link .icon:last-child {
+	opacity: 0.6;
+}
+
+.lang-switch {
+	display: inline-flex;
+	padding: 3px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.08);
+	border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.lang-switch a {
+	padding: 4px 10px;
+	border-radius: 999px;
+	color: rgba(255, 255, 255, 0.75);
+	font-size: 0.78rem;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-decoration: none !important;
+}
+
+.lang-switch a:hover {
+	color: #fff;
+}
+
+.lang-switch a.active {
+	background: #fff;
+	color: var(--navy);
+}
+
+/* On white panels (account page) */
+.panel .lang-switch {
+	background: var(--surface-2);
+	border-color: var(--line);
+}
+
+.panel .lang-switch a {
+	color: var(--muted);
+	padding: 6px 16px;
+	font-size: 0.86rem;
+}
+
+.panel .lang-switch a.active {
+	background: var(--accent);
+	color: #fff;
+}
+
 .topbar-user {
 	display: flex;
 	align-items: center;
@@ -1154,10 +1222,28 @@ button.link {
 	padding: 32px clamp(20px, 5vw, 72px) 40px;
 }
 
-.auth-logo {
+.auth-top {
 	grid-column: 1 / -1;
-	justify-self: start;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.auth-logo {
 	text-decoration: none !important;
+}
+
+.auth-links {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.auth-links .site-link {
+	background: rgba(8, 18, 32, 0.35);
+	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
 }
 
 .auth-card {
@@ -1222,13 +1308,20 @@ button.link {
 
 	.topbar-tag,
 	.pills,
-	.topbar-user .avatar {
+	.topbar-user .avatar,
+	.topbar .site-link span {
 		display: none;
 	}
 
-	.topbar-user {
+	.topbar .site-link {
 		margin-left: auto;
+		padding: 8px;
 	}
+
+	.topbar .site-link .icon:last-child {
+		display: none;
+	}
+
 
 	.content {
 		padding: 22px 14px calc(100px + env(safe-area-inset-bottom));
@@ -1340,8 +1433,16 @@ button.link {
 		gap: 0;
 	}
 
-	.auth-logo {
-		padding: 0 20px;
+	.auth-top {
+		padding: 0 16px 0 20px;
+	}
+
+	.auth-links .site-link span {
+		display: none;
+	}
+
+	.auth-links .site-link .icon:last-child {
+		display: none;
 	}
 
 	.slogan {

@@ -11,9 +11,12 @@ import { StorageError, resolveKey } from "../../../lib/storage";
 
 export const prerender = false;
 
-const notFound = () => new Response("Dosya bulunamadı.", { status: 404 });
-
 export const GET: APIRoute = async ({ params, locals, url }) => {
+	const notFound = () =>
+		new Response(locals.t("err.file_not_found"), {
+			status: 404,
+			headers: { "Content-Type": "text/plain; charset=utf-8" },
+		});
 	const env = locals.runtime.env;
 	const { DB } = env;
 	const user = locals.user!;
@@ -33,7 +36,7 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 	} catch (e) {
 		if (!(e instanceof StorageError)) throw e;
 		console.error(e.message);
-		return new Response("Dosya sunucusuna şu anda ulaşılamıyor. Lütfen biraz sonra tekrar deneyin.", {
+		return new Response(locals.t("flash.storage"), {
 			status: 503,
 			headers: { "Content-Type": "text/plain; charset=utf-8" },
 		});

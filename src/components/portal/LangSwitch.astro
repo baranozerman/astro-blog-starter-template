@@ -1,0 +1,23 @@
+---
+import { LANGS } from "../../lib/i18n";
+
+// Links back to the current page in the other language.
+const { lang } = Astro.locals;
+const here = Astro.url.pathname + Astro.url.search;
+---
+
+<nav class="lang-switch" aria-label="Language / Dil">
+	{
+		LANGS.map((l) => (
+			<a
+				href={`/portal/lang?to=${l}&next=${encodeURIComponent(here)}`}
+				class:list={{ active: l === lang }}
+				hreflang={l}
+				lang={l}
+				aria-current={l === lang ? "true" : undefined}
+			>
+				{l.toUpperCase()}
+			</a>
+		))
+	}
+</nav>

@@ -2,8 +2,10 @@
 import "../styles/portal.css";
 import Icon from "../components/portal/Icon.astro";
 import Logo from "../components/portal/Logo.astro";
-import { MESSAGES } from "../lib/portal";
+import LangSwitch from "../components/portal/LangSwitch.astro";
+import { MAX_UPLOAD_BYTES } from "../lib/portal";
 import { BACKDROPS, todaysBackdrop } from "../lib/backdrops";
+import { isMessageKey } from "../lib/i18n";
 
 interface Props {
 	title: string;
@@ -14,30 +16,35 @@ interface Props {
 }
 
 const { title, error, bare = false } = Astro.props;
-const user = Astro.locals.user;
+const { user, lang, t } = Astro.locals;
 const path = Astro.url.pathname;
-const ok = MESSAGES[Astro.url.searchParams.get("ok") ?? ""];
-const err = error || MESSAGES[Astro.url.searchParams.get("err") ?? ""];
+const flash = (code: string | null) => {
+	const key = `flash.${code}`;
+	return code && isMessageKey(key) ? t(key, { mb: Math.round(MAX_UPLOAD_BYTES / 1024 / 1024) }) : "";
+};
+const ok = flash(Astro.url.searchParams.get("ok"));
+const err = error || flash(Astro.url.searchParams.get("err"));
+const WEBSITE = "https://prodinox.com.tr";
 // Login shows a different image on each visit; inside the app it stays put for the day.
 const backdrop = bare ? BACKDROPS[Math.floor(Math.random() * BACKDROPS.length)] : todaysBackdrop();
 
 const nav = [
-	{ href: "/portal", label: "Dosyalar", icon: "folder" as const, active: path === "/portal" || path.startsWith("/portal/folders") },
+	{ href: "/portal", label: t("nav.files"), icon: "folder" as const, active: path === "/portal" || path.startsWith("/portal/folders") },
 	...(user?.role === "admin"
-		? [{ href: "/portal/admin", label: "Yönetim", icon: "settings" as const, active: path.startsWith("/portal/admin") }]
+		? [{ href: "/portal/admin", label: t("nav.admin"), icon: "settings" as const, active: path.startsWith("/portal/admin") }]
 		: []),
-	{ href: "/portal/account", label: "Hesabım", icon: "user" as const, active: path.startsWith("/portal/account") },
+	{ href: "/portal/account", label: t("nav.account"), icon: "user" as const, active: path.startsWith("/portal/account") },
 ];
 const initials = (user?.name ?? "")
 	.split(/\s+/)
 	.filter(Boolean)
 	.slice(0, 2)
-	.map((w) => w[0]!.toLocaleUpperCase("tr-TR"))
+	.map((w) => w[0]!.toLocaleUpperCase(lang))
 	.join("");
 ---
 
 <!doctype html>
-<html lang="tr">
+<html lang={lang}>
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -63,16 +70,26 @@ const initials = (user?.name ?? "")
 		{
 			bare ? (
 				<div class="auth">
-					<a class="auth-logo" href="/portal">
-						<Logo tone="light" height={46} />
-					</a>
+					<div class="auth-top">
+						<a class="auth-logo" href="/portal">
+							<Logo tone="light" height={46} />
+						</a>
+						<div class="auth-links">
+							<a class="site-link" href={WEBSITE} target="_blank" rel="noopener">
+								<Icon name="globe" size={16} />
+								<span>{t("app.website")}</span>
+								<Icon name="external" size={14} />
+							</a>
+							<LangSwitch />
+						</div>
+					</div>
 					<main class="auth-card">
 						{ok && <p class="flash ok"><Icon name="check" />{ok}</p>}
 						{err && <p class="flash err"><Icon name="alert" />{err}</p>}
 						<slot />
 					</main>
 					<p class="slogan">
-						<span>Meet</span> beyond <br /><span>the</span> visible.
+						<span>{t("app.slogan_a")}</span> {t("app.slogan_b")} <br /><span>{t("app.slogan_c")}</span> {t("app.slogan_d")}
 					</p>
 				</div>
 			) : (
@@ -80,7 +97,7 @@ const initials = (user?.name ?? "")
 					<header class="topbar">
 						<a class="topbar-logo" href="/portal">
 							<Logo tone="light" height={34} />
-							<span class="topbar-tag">Müşteri Portalı</span>
+							<span class="topbar-tag">{t("app.tagline")}</span>
 						</a>
 						<nav class="pills">
 							{nav.map((item) => (
@@ -90,13 +107,19 @@ const initials = (user?.name ?? "")
 								</a>
 							))}
 						</nav>
+						<a class="site-link" href={WEBSITE} target="_blank" rel="noopener" title={t("app.website")}>
+							<Icon name="globe" size={16} />
+							<span>{t("app.website")}</span>
+							<Icon name="external" size={14} />
+						</a>
+						<LangSwitch />
 						{user && (
 							<div class="topbar-user">
 								<span class="avatar" title={`${user.name} · ${user.company || user.email}`}>
 									{initials}
 								</span>
 								<form method="post" action="/portal/logout">
-									<button type="submit" class="icon-btn" title="Çıkış yap" aria-label="Çıkış yap">
+									<button type="submit" class="icon-btn" title={t("nav.logout")} aria-label={t("nav.logout")}>
 										<Icon name="logout" />
 									</button>
 								</form>
@@ -121,9 +144,15 @@ const initials = (user?.name ?? "")
 				</>
 			)
 		}
-		<p class="credit">{backdrop.caption}</p>
+		<p class="credit">{t(backdrop.caption)}</p>
 
 		<script>
+			// Forms that need a confirmation carry the (translated) question in data-confirm.
+			for (const form of document.querySelectorAll<HTMLFormElement>("form[data-confirm]")) {
+				form.addEventListener("submit", (e) => {
+					if (!confirm(form.dataset.confirm)) e.preventDefault();
+				});
+			}
 			// Fade out success messages after a few seconds.
 			for (const el of document.querySelectorAll<HTMLElement>("[data-autohide]")) {
 				setTimeout(() => el.classList.add("hide"), 4000);

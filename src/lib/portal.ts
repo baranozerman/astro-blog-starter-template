@@ -1,4 +1,5 @@
 import type { SessionUser } from "./auth";
+import { LOCALES, type Lang, type Translate } from "./i18n";
 
 // Workers accept request bodies up to 100 MB on Free/Pro plans; leave room for multipart overhead.
 export const MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
@@ -40,28 +41,6 @@ export interface FileRow {
 	uploaded_by: number | null;
 	created_at: number;
 }
-
-/** Flash messages shown after redirects, keyed by the `ok` / `err` query parameter. */
-export const MESSAGES: Record<string, string> = {
-	uploaded: "Dosya(lar) yüklendi.",
-	deleted: "Silindi.",
-	saved: "Değişiklikler kaydedildi.",
-	created: "Oluşturuldu.",
-	password: "Şifre güncellendi.",
-	nofile: "Lütfen en az bir dosya seçin.",
-	toolarge: `Dosya çok büyük (en fazla ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB).`,
-	forbidden: "Bu işlem için yetkiniz yok.",
-	self: "Kendi yönetici yetkinizi kaldıramaz, hesabınızı silemez veya pasifleştiremezsiniz.",
-	exists: "Bu e-posta adresiyle kayıtlı bir kullanıcı zaten var.",
-	invalid: "Lütfen formdaki alanları kontrol edin.",
-	storage: "Dosya sunucusuna şu anda ulaşılamıyor. Lütfen biraz sonra tekrar deneyin.",
-	moved: "Taşındı.",
-	renamed: "Yeniden adlandırıldı.",
-	folder_created: "Klasör oluşturuldu.",
-	notempty: "Bu klasör boş değil. İçindekileri önce taşıyın veya silin.",
-	badmove: "Bir klasör kendi içine taşınamaz.",
-	noselection: "Lütfen en az bir öğe seçin.",
-};
 
 export function parseId(value: string | undefined | null) {
 	const n = Number(value);
@@ -199,7 +178,7 @@ export function contentDisposition(type: "inline" | "attachment", name: string) 
 	return `${type}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
-export function formatBytes(bytes: number) {
+export function formatBytes(bytes: number, lang: Lang = "tr") {
 	if (bytes < 1024) return `${bytes} B`;
 	const units = ["KB", "MB", "GB"];
 	let value = bytes / 1024;
@@ -208,7 +187,7 @@ export function formatBytes(bytes: number) {
 		value /= 1024;
 		unit++;
 	}
-	return `${value.toLocaleString("tr-TR", { maximumFractionDigits: 1 })} ${units[unit]}`;
+	return `${value.toLocaleString(LOCALES[lang], { maximumFractionDigits: 1 })} ${units[unit]}`;
 }
 
 /** Short label for the file-type badge plus a color group. */
@@ -226,18 +205,18 @@ export function fileKind(name: string) {
 	return { label: ext ? ext.slice(0, 4).toUpperCase() : "DOSYA", group };
 }
 
-/** "3 gün önce" style relative time for recent dates, absolute date otherwise. */
-export function formatRelative(seconds: number) {
+/** "3 days ago" style relative time for recent dates, absolute date otherwise. */
+export function formatRelative(seconds: number, lang: Lang, t: Translate) {
 	const diff = Math.floor(Date.now() / 1000) - seconds;
-	if (diff < 60) return "az önce";
-	if (diff < 3600) return `${Math.floor(diff / 60)} dk önce`;
-	if (diff < 86400) return `${Math.floor(diff / 3600)} saat önce`;
-	if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} gün önce`;
-	return new Date(seconds * 1000).toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul", dateStyle: "medium" });
+	if (diff < 60) return t("common.just_now");
+	if (diff < 3600) return t("common.min_ago", { n: Math.floor(diff / 60) });
+	if (diff < 86400) return t("common.hours_ago", { n: Math.floor(diff / 3600) });
+	if (diff < 7 * 86400) return t("common.days_ago", { n: Math.floor(diff / 86400) });
+	return new Date(seconds * 1000).toLocaleDateString(LOCALES[lang], { timeZone: "Europe/Istanbul", dateStyle: "medium" });
 }
 
-export function formatDate(seconds: number) {
-	return new Date(seconds * 1000).toLocaleString("tr-TR", {
+export function formatDate(seconds: number, lang: Lang = "tr") {
+	return new Date(seconds * 1000).toLocaleString(LOCALES[lang], {
 		timeZone: "Europe/Istanbul",
 		dateStyle: "medium",
 		timeStyle: "short",

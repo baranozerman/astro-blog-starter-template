@@ -9,6 +9,7 @@ export const prerender = false;
 // as any user exists, and requires the SETUP_TOKEN secret so nobody else can
 // claim a freshly deployed portal.
 const { DB, SETUP_TOKEN } = Astro.locals.runtime.env;
+const { t } = Astro.locals;
 const userCount = await DB.prepare("SELECT COUNT(*) AS n FROM users").first<number>("n");
 if (userCount !== 0) return Astro.redirect("/portal/login");
 
@@ -21,9 +22,9 @@ if (Astro.request.method === "POST" && SETUP_TOKEN) {
 	values.company = String(form.get("company") ?? "").trim();
 	const password = String(form.get("password") ?? "");
 
-	if (String(form.get("token") ?? "") !== SETUP_TOKEN) error = "Kurulum anahtarı hatalı.";
-	else if (!values.email || !values.name) error = "E-posta ve ad zorunludur.";
-	else error = passwordProblem(password) ?? "";
+	if (String(form.get("token") ?? "") !== SETUP_TOKEN) error = t("err.bad_setup_token");
+	else if (!values.email || !values.name) error = t("err.name_email_required");
+	else error = passwordProblem(password, t);
 
 	if (!error) {
 		const { meta } = await DB.prepare(
@@ -41,43 +42,43 @@ if (Astro.request.method === "POST" && SETUP_TOKEN) {
 }
 ---
 
-<Portal title="Kurulum" bare error={error}>
+<Portal title={t("setup.title")} bare error={error}>
 	<div>
-		<h2>İlk yönetici hesabı</h2>
-		<p class="lead">Portalı yönetecek hesabı oluşturun. Bu sayfa yalnızca bir kez kullanılabilir.</p>
+		<h2>{t("setup.heading")}</h2>
+		<p class="lead">{t("setup.lead")}</p>
 		{
 			SETUP_TOKEN ? (
 				<form method="post" class="stack">
 					<label>
-						Kurulum anahtarı
+						{t("setup.token")}
 						<input type="password" name="token" required />
-						<span class="hint">Cloudflare'de tanımladığınız SETUP_TOKEN değeri.</span>
+						<span class="hint">{t("setup.token_hint")}</span>
 					</label>
 					<label>
-						Ad Soyad
+						{t("common.name")}
 						<input type="text" name="name" value={values.name} required />
 					</label>
 					<label>
-						Şirket
+						{t("common.company")}
 						<input type="text" name="company" value={values.company} />
 					</label>
 					<label>
-						E-posta
+						{t("common.email")}
 						<input type="email" name="email" value={values.email} required autocomplete="username" />
 					</label>
 					<label>
-						Şifre
+						{t("common.password")}
 						<input type="password" name="password" required minlength="10" autocomplete="new-password" />
 					</label>
-					<button type="submit" class="btn block">Yönetici oluştur</button>
+					<button type="submit" class="btn block">{t("setup.submit")}</button>
 				</form>
 			) : (
 				<p>
-					Kurulum için önce <code>SETUP_TOKEN</code> gizli değişkenini tanımlayın:
+					{t("setup.missing")}
 					<br />
 					<code>npx wrangler secret put SETUP_TOKEN</code>
 					<br />
-					(Yerel geliştirmede <code>.dev.vars</code> dosyasına ekleyin.)
+					{t("setup.missing_local")}
 				</p>
 			)
 		}

@@ -8,6 +8,7 @@ export const prerender = false;
 const env = Astro.locals.runtime.env;
 const { DB } = env;
 const admin = Astro.locals.user!;
+const { t } = Astro.locals;
 const folderId = parseId(Astro.params.id);
 const folder = folderId
 	? await DB.prepare("SELECT * FROM folders WHERE id = ?").bind(folderId).first<Folder>()
@@ -88,32 +89,32 @@ const fileCount = await DB.prepare(`SELECT COUNT(*) AS n FROM files WHERE folder
 	.first<number>("n");
 ---
 
-<Portal title={`${folder.name} – Ayarlar`}>
+<Portal title={t("admin.folder_settings", { name: folder.name })}>
 	<div class="page-head">
 		<div>
-			<div class="breadcrumb"><a href="/portal/admin">Yönetim</a> / Klasörler /</div>
+			<div class="breadcrumb"><a href="/portal/admin">{t("admin.title")}</a> / {t("admin.folders")} /</div>
 			<h1>{folder.name}</h1>
-			<p class="lead-light">{fileCount} dosya{treeIds.length > 1 && ` · ${treeIds.length - 1} alt klasör`}</p>
+			<p class="lead-light">{t("common.files_n", { n: fileCount ?? 0 })}{treeIds.length > 1 && ` · ${t("common.subfolders_n", { n: treeIds.length - 1 })}`}</p>
 		</div>
-		<a class="btn secondary" href={`/portal/folders/${folder.id}`}>Dosyaları aç</a>
+		<a class="btn secondary" href={`/portal/folders/${folder.id}`}>{t("admin.open_files")}</a>
 	</div>
 
 	<div class="panel">
-		<h2>Bilgiler</h2>
+		<h2>{t("admin.details")}</h2>
 		<form method="post" class="stack">
 			<input type="hidden" name="action" value="update" />
-			<label>Klasör adı <input type="text" name="name" value={folder.name} required /></label>
-			<label>Açıklama <textarea name="description" rows="3">{folder.description}</textarea></label>
-			<div><button type="submit" class="btn">Kaydet</button></div>
+			<label>{t("common.folder_name")} <input type="text" name="name" value={folder.name} required /></label>
+			<label>{t("common.description")} <textarea name="description" rows="3">{folder.description}</textarea></label>
+			<div><button type="submit" class="btn">{t("common.save")}</button></div>
 		</form>
 	</div>
 
 	<div class="panel">
-		<h2>Müşteri erişimi</h2>
+		<h2>{t("admin.customer_access")}</h2>
 		{
 			customers.length === 0 ? (
 				<p class="muted">
-					Henüz müşteri hesabı yok. <a href="/portal/admin">Yönetim sayfasından</a> oluşturabilirsiniz.
+					<a href="/portal/admin">{t("admin.no_customers")}</a>
 				</p>
 			) : (
 				<form method="post">
@@ -122,10 +123,10 @@ const fileCount = await DB.prepare(`SELECT COUNT(*) AS n FROM files WHERE folder
 						<table>
 							<thead>
 								<tr>
-									<th>Kullanıcı</th>
-									<th>Şirket</th>
-									<th class="center">Görüntüle / indir</th>
-									<th class="center">Yükle</th>
+									<th>{t("admin.col_user")}</th>
+									<th>{t("common.company")}</th>
+									<th class="center">{t("common.view_download")}</th>
+									<th class="center">{t("common.upload")}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -134,33 +135,33 @@ const fileCount = await DB.prepare(`SELECT COUNT(*) AS n FROM files WHERE folder
 										<td>
 											<a href={`/portal/admin/users/${u.id}`}>{u.name}</a>{" "}
 											<span class="muted">{u.email}</span>{" "}
-											{!u.active && <span class="badge red">Pasif</span>}
+											{!u.active && <span class="badge red">{t("common.inactive")}</span>}
 										</td>
 										<td>{u.company}</td>
 										<td class="center">
-											<input type="checkbox" name="read" value={u.id} checked={u.can_read === 1} aria-label={`${u.name} görüntüle`} />
+											<input type="checkbox" name="read" value={u.id} checked={u.can_read === 1} aria-label={`${u.name}: ${t("common.view_download")}`} />
 										</td>
 										<td class="center">
-											<input type="checkbox" name="upload" value={u.id} checked={u.can_upload === 1} aria-label={`${u.name} yükle`} />
+											<input type="checkbox" name="upload" value={u.id} checked={u.can_upload === 1} aria-label={`${u.name}: ${t("common.upload")}`} />
 										</td>
 									</tr>
 								))}
 							</tbody>
 						</table>
 					</div>
-					<p class="hint">Yöneticiler tüm klasörlere otomatik olarak erişir.</p>
-					<button type="submit" class="btn">İzinleri kaydet</button>
+					<p class="hint">{t("admin.admins_auto")}</p>
+					<button type="submit" class="btn">{t("admin.save_permissions")}</button>
 				</form>
 			)
 		}
 	</div>
 
 	<div class="panel danger-zone">
-		<h2>Klasörü sil</h2>
-		<form method="post" onsubmit="return confirm('Klasör ve içindeki TÜM dosyalar kalıcı olarak silinsin mi?')">
+		<h2>{t("admin.delete_folder")}</h2>
+		<form method="post" data-confirm={t("admin.delete_folder_confirm")}>
 			<input type="hidden" name="action" value="delete" />
-			<p class="hint">Alt klasörler ve içindeki {fileCount} dosya da kalıcı olarak silinir.</p>
-			<button type="submit" class="btn danger">Klasörü sil</button>
+			<p class="hint">{t("admin.delete_folder_hint", { n: fileCount ?? 0 })}</p>
+			<button type="submit" class="btn danger">{t("admin.delete_folder")}</button>
 		</form>
 	</div>
 </Portal>

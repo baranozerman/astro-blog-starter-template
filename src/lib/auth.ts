@@ -1,4 +1,5 @@
 import type { AstroCookies } from "astro";
+import type { Translate } from "./i18n";
 
 export const SESSION_COOKIE = "prodinox_session";
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
@@ -66,11 +67,9 @@ export async function verifyPassword(password: string, stored: string) {
 	return diff === 0;
 }
 
-export function passwordProblem(password: string): string | null {
-	if (password.length < MIN_PASSWORD_LENGTH) {
-		return `Şifre en az ${MIN_PASSWORD_LENGTH} karakter olmalı.`;
-	}
-	return null;
+/** Returns a translated error when the password is too weak, otherwise "". */
+export function passwordProblem(password: string, t: Translate): string {
+	return password.length < MIN_PASSWORD_LENGTH ? t("err.password_short", { n: MIN_PASSWORD_LENGTH }) : "";
 }
 
 export type LoginResult = { userId: number } | { error: "invalid" | "locked" };

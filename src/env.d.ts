@@ -15,5 +15,7 @@ interface Env {
 declare namespace App {
   interface Locals extends Runtime {
     user: import("./lib/auth").SessionUser | null;
+    lang: import("./lib/i18n").Lang;
+    t: import("./lib/i18n").Translate;
   }
 }

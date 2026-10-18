@@ -18,12 +18,14 @@ import {
 	type Folder,
 } from "../../../lib/portal";
 import { StorageError, deleteStored, storeUpload } from "../../../lib/storage";
+import { LOCALES, rawMessage } from "../../../lib/i18n";
 
 export const prerender = false;
 
 const env = Astro.locals.runtime.env;
 const { DB } = env;
 const user = Astro.locals.user!;
+const { lang, t } = Astro.locals;
 const folderId = parseId(Astro.params.id);
 const access = folderId ? await getFolderAccess(DB, user, folderId) : null;
 if (!access) return Astro.redirect("/portal?err=forbidden");
@@ -220,6 +222,22 @@ const { results: files } = await DB.prepare(
 
 const moveTargets = canUpload ? await folderTree(DB, isAdmin ? "all" : [rootId]) : [];
 const maxMb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
+const currentLabel = t("fm.current");
+// Strings the browser-side script needs.
+const jsText = {
+	filesTotal: rawMessage(lang, "fm.js.files_total"),
+	tooBig: rawMessage(lang, "fm.js.too_big"),
+	uploading: rawMessage(lang, "fm.js.uploading"),
+	processing: rawMessage(lang, "fm.js.processing"),
+	networkError: rawMessage(lang, "fm.js.network_error"),
+	moveOne: rawMessage(lang, "fm.js.move_one"),
+	moveMany: rawMessage(lang, "fm.js.move_many"),
+	deleteOne: rawMessage(lang, "fm.js.delete_one"),
+	deleteFolderNote: rawMessage(lang, "fm.js.delete_folder_note"),
+	deleteMany: rawMessage(lang, "fm.js.delete_many"),
+	selected: rawMessage(lang, "fm.selected_n"),
+};
+const numberLocale = LOCALES[lang];
 const anyManageable = files.some(canManageFile) || subfolders.some(canManageFolder);
 const parent = path.length > 1 ? path[path.length - 2] : null;
 ---
@@ -227,8 +245,8 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 <Portal title={folder.name}>
 	<div class="page-head">
 		<div>
-			<nav class="breadcrumb" aria-label="Konum">
-				<a href="/portal"><Icon name="home" size={14} /> Dosyalar</a>
+			<nav class="breadcrumb" aria-label={t("fm.breadcrumb")}>
+				<a href="/portal"><Icon name="home" size={14} /> {t("nav.files")}</a>
 				{
 					path.slice(0, -1).map((p) => (
 						<>
@@ -244,7 +262,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 		{
 			isAdmin && path.length === 1 && (
 				<a class="btn glass" href={`/portal/admin/folders/${folder.id}`}>
-					<Icon name="users" /> Erişim ayarları
+					<Icon name="users" /> {t("fm.access_settings")}
 				</a>
 			)
 		}
@@ -261,8 +279,8 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 								<Icon name="plus" size={28} />
 							</span>
 							<span class="drop-text">
-								<strong>Dosya ekle</strong>
-								<span>veya buraya sürükleyip bırakın</span>
+								<strong>{t("fm.add_files")}</strong>
+								<span>{t("fm.drop_hint")}</span>
 							</span>
 							<input type="file" name="files" multiple required id="file-input" />
 						</label>
@@ -274,14 +292,14 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 							</svg>
 							<span class="ring-pct" id="ring-pct">0%</span>
 						</div>
-						<p class="hint center" id="upload-status">Tek seferde en fazla {maxMb} MB · {folder.name}</p>
+						<p class="hint center" id="upload-status">{t("fm.limit", { mb: maxMb, folder: folder.name })}</p>
 						<button type="submit" class="btn block" id="upload-btn" disabled>
-							<Icon name="upload" /> Yükle
+							<Icon name="upload" /> {t("fm.upload")}
 						</button>
 					</form>
 					<div class="transfer-sep" />
 					<button type="button" class="btn secondary block" data-open="dlg-mkdir">
-						<Icon name="folderPlus" /> Yeni klasör
+						<Icon name="folderPlus" /> {t("fm.new_folder")}
 					</button>
 				</aside>
 			)
@@ -290,13 +308,13 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 		<section class="panel fm-main">
 			<div class="fm-toolbar">
 				<div class="fm-bulk" id="bulk" hidden>
-					<span id="bulk-count">0 seçili</span>
-					<button type="button" class="btn small secondary" data-bulk="move"><Icon name="move" size={16} /> Taşı</button>
-					<button type="button" class="btn small danger" data-bulk="delete"><Icon name="trash" size={16} /> Sil</button>
+					<span id="bulk-count">{t("fm.selected_n", { n: 0 })}</span>
+					<button type="button" class="btn small secondary" data-bulk="move"><Icon name="move" size={16} /> {t("common.move")}</button>
+					<button type="button" class="btn small danger" data-bulk="delete"><Icon name="trash" size={16} /> {t("common.delete")}</button>
 				</div>
 				<div class="search">
 					<Icon name="search" size={16} />
-					<input type="search" id="file-search" placeholder="Bu klasörde ara…" aria-label="Bu klasörde ara" />
+					<input type="search" id="file-search" placeholder={t("fm.search")} aria-label={t("fm.search")} />
 				</div>
 			</div>
 
@@ -304,19 +322,19 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 				subfolders.length + files.length === 0 && !parent ? (
 					<div class="empty">
 						<Icon name="folder" size={40} />
-						<strong>Bu klasör boş</strong>
-						<span>{canUpload ? "Soldan dosya ekleyin veya yeni bir klasör oluşturun." : "Henüz paylaşılan dosya yok."}</span>
+						<strong>{t("fm.empty_title")}</strong>
+						<span>{canUpload ? t("fm.empty_upload") : t("fm.empty_read")}</span>
 					</div>
 				) : (
 					<div class="files" id="files">
 						<div class="file-row head">
 							<span class="fm-check">
-								{anyManageable && <input type="checkbox" id="select-all" aria-label="Tümünü seç" />}
+								{anyManageable && <input type="checkbox" id="select-all" aria-label={t("fm.select_all")} />}
 							</span>
-							<span>Ad</span>
-							<span>Boyut</span>
-							<span>Yükleyen</span>
-							<span>Tarih</span>
+							<span>{t("fm.col_name")}</span>
+							<span>{t("fm.col_size")}</span>
+							<span>{t("fm.col_uploader")}</span>
+							<span>{t("fm.col_date")}</span>
 							<span />
 						</div>
 
@@ -325,7 +343,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 								<span class="fm-check" />
 								<a class="file-name" href={`/portal/folders/${parent.id}`}>
 									<span class="file-type folder"><Icon name="arrowLeft" size={18} /></span>
-									<span>Üst klasöre dön</span>
+									<span>{t("fm.up")}</span>
 								</a>
 							</div>
 						)}
@@ -334,7 +352,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 							<div class="file-row" data-name={f.name.toLocaleLowerCase("tr-TR")}>
 								<span class="fm-check">
 									{canManageFolder(f) && (
-										<input type="checkbox" class="pick" data-kind="folder" data-id={f.id} aria-label={`${f.name} seç`} />
+										<input type="checkbox" class="pick" data-kind="folder" data-id={f.id} aria-label={t("fm.select_item", { name: f.name })} />
 									)}
 								</span>
 								<div class="file-name">
@@ -342,23 +360,23 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 									<div>
 										<a href={`/portal/folders/${f.id}`}>{f.name}</a>
 										<span class="file-sub">
-											{f.folder_count > 0 && `${f.folder_count} klasör · `}{f.file_count} dosya
+											{f.folder_count > 0 && `${t("common.folders_n", { n: f.folder_count })} · `}{t("common.files_n", { n: f.file_count })}
 										</span>
 									</div>
 								</div>
-								<span class="file-meta">{f.folder_count > 0 && `${f.folder_count} klasör, `}{f.file_count} dosya</span>
+								<span class="file-meta">{f.folder_count > 0 && `${t("common.folders_n", { n: f.folder_count })}, `}{t("common.files_n", { n: f.file_count })}</span>
 								<span class="file-meta">—</span>
-								<span class="file-meta">{f.last_upload ? formatRelative(f.last_upload) : "—"}</span>
+								<span class="file-meta">{f.last_upload ? formatRelative(f.last_upload, lang, t) : "—"}</span>
 								<div class="file-actions">
 									{canManageFolder(f) && (
 										<details class="menu">
-											<summary class="btn small secondary icon-only" aria-label={`${f.name} işlemleri`}>
+											<summary class="btn small secondary icon-only" aria-label={t("fm.actions_for", { name: f.name })}>
 												<Icon name="more" size={18} />
 											</summary>
 											<div class="menu-list">
-												<button type="button" data-act="rename" data-kind="folder" data-id={f.id} data-name={f.name}><Icon name="pencil" size={16} /> Yeniden adlandır</button>
-												<button type="button" data-act="move" data-kind="folder" data-id={f.id}><Icon name="move" size={16} /> Taşı</button>
-												<button type="button" class="danger" data-act="delete" data-kind="folder" data-id={f.id} data-name={f.name}><Icon name="trash" size={16} /> Sil</button>
+												<button type="button" data-act="rename" data-kind="folder" data-id={f.id} data-name={f.name}><Icon name="pencil" size={16} /> {t("common.rename")}</button>
+												<button type="button" data-act="move" data-kind="folder" data-id={f.id}><Icon name="move" size={16} /> {t("common.move")}</button>
+												<button type="button" class="danger" data-act="delete" data-kind="folder" data-id={f.id} data-name={f.name}><Icon name="trash" size={16} /> {t("common.delete")}</button>
 											</div>
 										</details>
 									)}
@@ -372,7 +390,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 								<div class="file-row" data-name={f.name.toLocaleLowerCase("tr-TR")}>
 									<span class="fm-check">
 										{canManageFile(f) && (
-											<input type="checkbox" class="pick" data-kind="file" data-id={f.id} aria-label={`${f.name} seç`} />
+											<input type="checkbox" class="pick" data-kind="file" data-id={f.id} aria-label={t("fm.select_item", { name: f.name })} />
 										)}
 									</span>
 									<div class="file-name">
@@ -380,35 +398,35 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 										<div>
 											<a href={`/portal/files/${f.id}`} title={f.name}>{f.name}</a>
 											<span class="file-sub">
-												{formatBytes(f.size)} · {formatRelative(f.created_at)}
+												{formatBytes(f.size, lang)} · {formatRelative(f.created_at, lang, t)}
 												{f.uploader && ` · ${f.uploader}`}
 											</span>
 										</div>
 									</div>
-									<span class="file-meta">{formatBytes(f.size)}</span>
+									<span class="file-meta">{formatBytes(f.size, lang)}</span>
 									<span class="file-meta">{f.uploader ?? "—"}</span>
-									<span class="file-meta" title={formatDate(f.created_at)}>{formatRelative(f.created_at)}</span>
+									<span class="file-meta" title={formatDate(f.created_at, lang)}>{formatRelative(f.created_at, lang, t)}</span>
 									<div class="file-actions">
 										{INLINE_TYPES.has(f.content_type) && (
-											<a class="btn small secondary icon-only hide-sm" href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener" title="Görüntüle" aria-label={`${f.name} görüntüle`}>
+											<a class="btn small secondary icon-only hide-sm" href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener" title={t("common.view")} aria-label={`${t("common.view")}: ${f.name}`}>
 												<Icon name="eye" size={16} />
 											</a>
 										)}
-										<a class="btn small secondary icon-only" href={`/portal/files/${f.id}`} title="İndir" aria-label={`${f.name} indir`}>
+										<a class="btn small secondary icon-only" href={`/portal/files/${f.id}`} title={t("common.download")} aria-label={`${t("common.download")}: ${f.name}`}>
 											<Icon name="download" size={16} />
 										</a>
 										{canManageFile(f) && (
 											<details class="menu">
-												<summary class="btn small secondary icon-only" aria-label={`${f.name} işlemleri`}>
+												<summary class="btn small secondary icon-only" aria-label={t("fm.actions_for", { name: f.name })}>
 													<Icon name="more" size={18} />
 												</summary>
 												<div class="menu-list">
 													{INLINE_TYPES.has(f.content_type) && (
-														<a href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener"><Icon name="eye" size={16} /> Görüntüle</a>
+														<a href={`/portal/files/${f.id}?inline`} target="_blank" rel="noopener"><Icon name="eye" size={16} /> {t("common.view")}</a>
 													)}
-													<button type="button" data-act="rename" data-kind="file" data-id={f.id} data-name={f.name}><Icon name="pencil" size={16} /> Yeniden adlandır</button>
-													<button type="button" data-act="move" data-kind="file" data-id={f.id}><Icon name="move" size={16} /> Taşı</button>
-													<button type="button" class="danger" data-act="delete" data-kind="file" data-id={f.id} data-name={f.name}><Icon name="trash" size={16} /> Sil</button>
+													<button type="button" data-act="rename" data-kind="file" data-id={f.id} data-name={f.name}><Icon name="pencil" size={16} /> {t("common.rename")}</button>
+													<button type="button" data-act="move" data-kind="file" data-id={f.id}><Icon name="move" size={16} /> {t("common.move")}</button>
+													<button type="button" class="danger" data-act="delete" data-kind="file" data-id={f.id} data-name={f.name}><Icon name="trash" size={16} /> {t("common.delete")}</button>
 												</div>
 											</details>
 										)}
@@ -420,7 +438,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 						{subfolders.length + files.length === 0 && (
 							<div class="empty">
 								<Icon name="folder" size={36} />
-								<span>Bu klasör boş.</span>
+								<span>{t("fm.empty_short")}</span>
 							</div>
 						)}
 					</div>
@@ -437,12 +455,12 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 	<dialog id="dlg-mkdir" class="dialog">
 		<form method="post" class="stack">
 			<input type="hidden" name="action" value="mkdir" />
-			<h2>Yeni klasör</h2>
-			<p class="hint">{pathLabel} içinde oluşturulacak.</p>
-			<label>Klasör adı <input type="text" name="name" required maxlength="200" autocomplete="off" /></label>
+			<h2>{t("fm.mkdir_title")}</h2>
+			<p class="hint">{t("fm.mkdir_where", { path: pathLabel })}</p>
+			<label>{t("common.folder_name")} <input type="text" name="name" required maxlength="200" autocomplete="off" /></label>
 			<div class="dialog-actions">
-				<button type="button" class="btn secondary" data-close>Vazgeç</button>
-				<button type="submit" class="btn">Oluştur</button>
+				<button type="button" class="btn secondary" data-close>{t("common.cancel")}</button>
+				<button type="submit" class="btn">{t("fm.create")}</button>
 			</div>
 		</form>
 	</dialog>
@@ -450,11 +468,11 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 	<dialog id="dlg-rename" class="dialog">
 		<form method="post" class="stack" id="rename-form">
 			<input type="hidden" name="action" value="rename" />
-			<h2>Yeniden adlandır</h2>
-			<label>Yeni ad <input type="text" name="name" required maxlength="200" autocomplete="off" /></label>
+			<h2>{t("fm.rename_title")}</h2>
+			<label>{t("fm.new_name")} <input type="text" name="name" required maxlength="200" autocomplete="off" /></label>
 			<div class="dialog-actions">
-				<button type="button" class="btn secondary" data-close>Vazgeç</button>
-				<button type="submit" class="btn">Kaydet</button>
+				<button type="button" class="btn secondary" data-close>{t("common.cancel")}</button>
+				<button type="submit" class="btn">{t("common.save")}</button>
 			</div>
 		</form>
 	</dialog>
@@ -462,34 +480,38 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 	<dialog id="dlg-move" class="dialog">
 		<form method="post" class="stack" id="move-form">
 			<input type="hidden" name="action" value="move" />
-			<h2>Taşı</h2>
+			<h2>{t("fm.move_title")}</h2>
 			<p class="hint" id="move-what" />
 			<label>
-				Hedef klasör
+				{t("fm.move_target")}
 				<select name="target" required>
 					{
 						moveTargets.map((t) => (
 							<option value={t.id} selected={t.id === folder.id} disabled={t.id === folder.id}>
-								{"  ".repeat(t.depth)}{t.path.split(" / ").pop()}{t.id === folder.id ? " (şu anki)" : ""}
+								{"  ".repeat(t.depth)}{t.path.split(" / ").pop()}{t.id === folder.id ? ` ${currentLabel}` : ""}
 							</option>
 						))
 					}
 				</select>
 			</label>
 			<div class="dialog-actions">
-				<button type="button" class="btn secondary" data-close>Vazgeç</button>
-				<button type="submit" class="btn">Taşı</button>
+				<button type="button" class="btn secondary" data-close>{t("common.cancel")}</button>
+				<button type="submit" class="btn">{t("common.move")}</button>
 			</div>
 		</form>
 	</dialog>
 </Portal>
 
-<script define:vars={{ maxBytes: MAX_UPLOAD_BYTES }}>
+<script define:vars={{ maxBytes: MAX_UPLOAD_BYTES, text: jsText, numberLocale }}>
 	const $ = (id) => document.getElementById(id);
+	const tr = (template, vars) => {
+		const text = template.includes("|") ? template.split("|")[vars.n === 1 ? 0 : 1] : template;
+		return text.replace(/\{(\w+)\}/g, (_, k) => String(vars[k]));
+	};
 	const fmt = (n) =>
 		n < 1024 * 1024
 			? `${Math.max(1, Math.round(n / 1024))} KB`
-			: `${(n / 1024 / 1024).toLocaleString("tr-TR", { maximumFractionDigits: 1 })} MB`;
+			: `${(n / 1024 / 1024).toLocaleString(numberLocale, { maximumFractionDigits: 1 })} MB`;
 
 	// ---------- upload ----------
 	const form = $("upload-form");
@@ -525,8 +547,8 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 			const tooBig = total > maxBytes;
 			button.disabled = files.length === 0 || tooBig;
 			status.textContent = tooBig
-				? `Toplam ${fmt(total)}: sınır ${fmt(maxBytes)}. Lütfen daha az dosya seçin.`
-				: `${files.length} dosya · ${fmt(total)}`;
+				? tr(text.tooBig, { size: fmt(total), max: fmt(maxBytes) })
+				: tr(text.filesTotal, { n: files.length, size: fmt(total) });
 		};
 
 		input.addEventListener("change", showSelection);
@@ -561,11 +583,11 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 				const p = ev.loaded / ev.total;
 				bar.style.strokeDashoffset = `${circumference * (1 - p)}`;
 				pct.textContent = `${Math.round(p * 100)}%`;
-				status.textContent = p < 1 ? "Yükleniyor…" : "İşleniyor…";
+				status.textContent = p < 1 ? text.uploading : text.processing;
 			});
 			xhr.addEventListener("load", () => location.assign(xhr.responseURL || location.pathname));
 			xhr.addEventListener("error", () => {
-				status.textContent = "Bağlantı hatası. Lütfen tekrar deneyin.";
+				status.textContent = text.networkError;
 				button.disabled = false;
 				ring.hidden = true;
 				dropzone.hidden = false;
@@ -617,13 +639,13 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 		} else if (act === "move") {
 			const f = $("move-form");
 			setItems(f, items);
-			$("move-what").textContent = items.length === 1 ? "Seçili öğe taşınacak." : `${items.length} öğe taşınacak.`;
+			$("move-what").textContent = items.length === 1 ? text.moveOne : tr(text.moveMany, { n: items.length });
 			$("dlg-move").showModal();
 		} else if (act === "delete") {
 			const msg =
 				items.length === 1
-					? `"${name}" silinsin mi?${items[0].kind === "folder" ? " Klasörün içindekiler de silinir." : ""}`
-					: `${items.length} öğe silinsin mi? Seçili klasörlerin içindekiler de silinir.`;
+					? tr(text.deleteOne, { name }) + (items[0].kind === "folder" ? text.deleteFolderNote : "")
+					: tr(text.deleteMany, { n: items.length });
 			if (!confirm(msg)) return;
 			itemForm.elements.action.value = "delete";
 			setItems(itemForm, items);
@@ -650,7 +672,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 	const refresh = () => {
 		const n = selected().length;
 		bulk.hidden = n === 0;
-		$("bulk-count").textContent = `${n} seçili`;
+		$("bulk-count").textContent = tr(text.selected, { n });
 		const all = $("select-all");
 		if (all) all.checked = n > 0 && n === picks().filter((p) => !p.closest(".file-row").hidden).length;
 	};

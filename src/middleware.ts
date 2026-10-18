@@ -1,11 +1,17 @@
 import { defineMiddleware } from "astro:middleware";
 import { SESSION_COOKIE, getSessionUser } from "./lib/auth";
+import { LANG_COOKIE, detectLang, translator } from "./lib/i18n";
 import { ensureSchema } from "./lib/schema";
 
-const PUBLIC_PATHS = new Set(["/portal/login", "/portal/setup"]);
+const PUBLIC_PATHS = new Set(["/portal/login", "/portal/setup", "/portal/lang"]);
 
 export const onRequest = defineMiddleware(async (context, next) => {
 	context.locals.user = null;
+	context.locals.lang = detectLang(
+		context.cookies.get(LANG_COOKIE)?.value,
+		context.request.headers.get("Accept-Language"),
+	);
+	context.locals.t = translator(context.locals.lang);
 	const path = context.url.pathname.replace(/\/+$/, "") || "/";
 	if (path !== "/portal" && !path.startsWith("/portal/")) return next();
 
