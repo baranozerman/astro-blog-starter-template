@@ -1,19 +1,22 @@
 ---
 import Portal from "../../../../layouts/Portal.astro";
-import { audit, parseId, subtreeIds, type Folder } from "../../../../lib/portal";
+import Icon from "../../../../components/portal/Icon.astro";
+import AdminTabs from "../../../../components/portal/AdminTabs.astro";
+import AccessSelect from "../../../../components/portal/AccessSelect.astro";
+import { audit, formatBytes, parseId, subtreeIds, type Folder } from "../../../../lib/portal";
 import { StorageError, deleteStored } from "../../../../lib/storage";
+import { listUsers, permissionMap, readAccessForm, saveAccess } from "../../../../lib/admin";
+import { rawMessage } from "../../../../lib/i18n";
 
 export const prerender = false;
 
 const env = Astro.locals.runtime.env;
 const { DB } = env;
 const admin = Astro.locals.user!;
-const { t } = Astro.locals;
+const { lang, t } = Astro.locals;
 const folderId = parseId(Astro.params.id);
-const folder = folderId
-	? await DB.prepare("SELECT * FROM folders WHERE id = ?").bind(folderId).first<Folder>()
-	: null;
-if (!folder) return Astro.redirect("/portal/admin");
+const folder = folderId ? await DB.prepare("SELECT * FROM folders WHERE id = ?").bind(folderId).first<Folder>() : null;
+if (!folder) return Astro.redirect("/portal/admin/folders");
 // Access is managed on top-level folders; subfolders are handled in the file manager.
 if (folder.parent_id !== null) return Astro.redirect(`/portal/folders/${folder.id}`);
 const treeIds = await subtreeIds(DB, folder.id);
@@ -35,21 +38,10 @@ if (Astro.request.method === "POST") {
 		return Astro.redirect(`${here}?ok=saved`);
 	}
 
-	if (action === "permissions") {
-		const read = new Set(form.getAll("read").map(String));
-		const upload = new Set(form.getAll("upload").map(String));
-		const userIds = [...new Set([...read, ...upload])].map(parseId).filter((n) => n !== null);
-		await DB.batch([
-			DB.prepare("DELETE FROM permissions WHERE folder_id = ?").bind(folder.id),
-			...userIds.map((uid) =>
-				DB.prepare(
-					`INSERT INTO permissions (user_id, folder_id, can_read, can_upload)
-					 SELECT id, ?, ?, ? FROM users WHERE id = ?`,
-				).bind(folder.id, read.has(String(uid)) ? 1 : 0, upload.has(String(uid)) ? 1 : 0, uid),
-			),
-			audit(DB, admin.id, "permissions", folder.name),
-		]);
-		return Astro.redirect(`${here}?ok=saved`);
+	if (action === "access") {
+		const changes = (await readAccessForm(DB, form)).filter((c) => c.folderId === folder.id);
+		await saveAccess(DB, admin.id, changes);
+		return Astro.redirect(`${here}?ok=access`);
 	}
 
 	if (action === "delete") {
@@ -71,97 +63,115 @@ if (Astro.request.method === "POST") {
 			DB.prepare("DELETE FROM folders WHERE id = ?").bind(folder.id),
 			audit(DB, admin.id, "folder_delete", folder.name),
 		]);
-		return Astro.redirect("/portal/admin?ok=deleted");
+		return Astro.redirect("/portal/admin/folders?ok=deleted");
 	}
 }
 
-const { results: customers } = await DB.prepare(
-	`SELECT u.id, u.name, u.company, u.email, u.active,
-	        COALESCE(p.can_read, 0) AS can_read, COALESCE(p.can_upload, 0) AS can_upload
-	 FROM users u LEFT JOIN permissions p ON p.user_id = u.id AND p.folder_id = ?
-	 WHERE u.role = 'customer'
-	 ORDER BY u.company COLLATE NOCASE, u.name COLLATE NOCASE`,
-)
-	.bind(folder.id)
-	.all<{ id: number; name: string; company: string; email: string; active: number; can_read: number; can_upload: number }>();
-const fileCount = await DB.prepare(`SELECT COUNT(*) AS n FROM files WHERE folder_id IN (${inTree})`)
-	.bind(...treeIds)
-	.first<number>("n");
+const [users, perms, totals] = await Promise.all([
+	listUsers(DB),
+	permissionMap(DB),
+	DB.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files WHERE folder_id IN (${inTree})`)
+		.bind(...treeIds)
+		.first<{ files: number; bytes: number }>(),
+]);
+const customers = users.filter((u) => u.role === "customer");
+const level = (userId: number) => perms.get(`${userId}:${folder.id}`) ?? "none";
+const withAccess = customers.filter((u) => level(u.id) !== "none").length;
 ---
 
 <Portal title={t("admin.folder_settings", { name: folder.name })}>
 	<div class="page-head">
 		<div>
-			<div class="breadcrumb"><a href="/portal/admin">{t("admin.title")}</a> / {t("admin.folders")} /</div>
+			<nav class="breadcrumb">
+				<a href="/portal/admin/folders"><Icon name="folder" size={14} /> {t("admin.tab_folders")}</a>
+				<Icon name="chevron" size={14} />
+			</nav>
 			<h1>{folder.name}</h1>
-			<p class="lead-light">{t("common.files_n", { n: fileCount ?? 0 })}{treeIds.length > 1 && ` · ${t("common.subfolders_n", { n: treeIds.length - 1 })}`}</p>
+			{folder.description && <p class="lead-light">{folder.description}</p>}
 		</div>
-		<a class="btn secondary" href={`/portal/folders/${folder.id}`}>{t("admin.open_files")}</a>
+		<div class="head-actions">
+			<a class="btn glass" href={`/portal/folders/${folder.id}`}><Icon name="folder" /> {t("admin.open_files")}</a>
+		</div>
 	</div>
 
-	<div class="panel">
-		<h2>{t("admin.details")}</h2>
-		<form method="post" class="stack">
-			<input type="hidden" name="action" value="update" />
-			<label>{t("common.folder_name")} <input type="text" name="name" value={folder.name} required /></label>
-			<label>{t("common.description")} <textarea name="description" rows="3">{folder.description}</textarea></label>
-			<div><button type="submit" class="btn">{t("common.save")}</button></div>
-		</form>
+	<AdminTabs />
+
+	<div class="stats">
+		<div class="stat">
+			<span class="stat-icon"><Icon name="file" size={20} /></span>
+			<div><strong>{totals?.files ?? 0}</strong><span>{t("admin.stat_files")}</span></div>
+		</div>
+		<div class="stat">
+			<span class="stat-icon"><Icon name="folder" size={20} /></span>
+			<div><strong>{treeIds.length - 1}</strong><span>{t("admin.subfolders")}</span></div>
+		</div>
+		<div class="stat">
+			<span class="stat-icon"><Icon name="database" size={20} /></span>
+			<div><strong>{formatBytes(totals?.bytes ?? 0, lang)}</strong><span>{t("admin.size")}</span></div>
+		</div>
+		<div class="stat">
+			<span class="stat-icon"><Icon name="users" size={20} /></span>
+			<div><strong>{withAccess}</strong><span>{t("admin.stat_customers")}</span></div>
+		</div>
 	</div>
 
-	<div class="panel">
-		<h2>{t("admin.customer_access")}</h2>
-		{
-			customers.length === 0 ? (
-				<p class="muted">
-					<a href="/portal/admin">{t("admin.no_customers")}</a>
-				</p>
-			) : (
-				<form method="post">
-					<input type="hidden" name="action" value="permissions" />
-					<div class="table-wrap">
-						<table>
-							<thead>
-								<tr>
-									<th>{t("admin.col_user")}</th>
-									<th>{t("common.company")}</th>
-									<th class="center">{t("common.view_download")}</th>
-									<th class="center">{t("common.upload")}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{customers.map((u) => (
-									<tr>
-										<td>
-											<a href={`/portal/admin/users/${u.id}`}>{u.name}</a>{" "}
-											<span class="muted">{u.email}</span>{" "}
-											{!u.active && <span class="badge red">{t("common.inactive")}</span>}
-										</td>
-										<td>{u.company}</td>
-										<td class="center">
-											<input type="checkbox" name="read" value={u.id} checked={u.can_read === 1} aria-label={`${u.name}: ${t("common.view_download")}`} />
-										</td>
-										<td class="center">
-											<input type="checkbox" name="upload" value={u.id} checked={u.can_upload === 1} aria-label={`${u.name}: ${t("common.upload")}`} />
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-					<p class="hint">{t("admin.admins_auto")}</p>
-					<button type="submit" class="btn">{t("admin.save_permissions")}</button>
+	<div class="grid-2">
+		<div class="panel">
+			<div class="panel-head">
+				<h2>{t("admin.customer_access")}</h2>
+				{customers.length > 0 && <a class="btn small secondary" href="/portal/admin/access"><Icon name="shield" size={14} /> {t("admin.access_title")}</a>}
+			</div>
+			{
+				customers.length === 0 ? (
+					<p class="muted">
+						<a href="/portal/admin/users#new">{t("admin.no_customers")}</a>
+					</p>
+				) : (
+					<form method="post" data-access-form>
+						<input type="hidden" name="action" value="access" />
+						<p class="hint">{t("admin.folder_users_lead")}</p>
+						<div class="access-list">
+							{customers.map((u) => (
+								<div class="access-item">
+									<a class="access-name" href={`/portal/admin/users/${u.id}`}>
+										<strong>{u.name}</strong>
+										<span class="muted small">{u.company || u.email}</span>
+									</a>
+									{!u.active && <span class="badge red">{t("common.inactive")}</span>}
+									<AccessSelect name={`access:${u.id}:${folder.id}`} value={level(u.id)} label={u.name} />
+								</div>
+							))}
+						</div>
+						<p class="hint">{t("admin.admins_auto")}</p>
+						<div class="save-bar" data-save-bar data-template={rawMessage(lang, "admin.access_changed")}>
+							<span data-count></span>
+							<button type="button" class="btn secondary small" data-reset>{t("admin.access_reset")}</button>
+							<button type="submit" class="btn">{t("admin.save_permissions")}</button>
+						</div>
+					</form>
+				)
+			}
+		</div>
+
+		<div>
+			<div class="panel">
+				<h2>{t("admin.details")}</h2>
+				<form method="post" class="stack">
+					<input type="hidden" name="action" value="update" />
+					<label>{t("common.folder_name")} <input type="text" name="name" value={folder.name} required /></label>
+					<label>{t("common.description")} <textarea name="description" rows="3">{folder.description}</textarea></label>
+					<div><button type="submit" class="btn">{t("common.save")}</button></div>
 				</form>
-			)
-		}
-	</div>
+			</div>
 
-	<div class="panel danger-zone">
-		<h2>{t("admin.delete_folder")}</h2>
-		<form method="post" data-confirm={t("admin.delete_folder_confirm")}>
-			<input type="hidden" name="action" value="delete" />
-			<p class="hint">{t("admin.delete_folder_hint", { n: fileCount ?? 0 })}</p>
-			<button type="submit" class="btn danger">{t("admin.delete_folder")}</button>
-		</form>
+			<div class="panel danger-zone">
+				<h2>{t("admin.danger")}</h2>
+				<form method="post" data-confirm={t("admin.delete_folder_confirm")} class="danger-row">
+					<input type="hidden" name="action" value="delete" />
+					<p class="hint">{t("admin.delete_folder_hint", { n: totals?.files ?? 0 })}</p>
+					<button type="submit" class="btn danger"><Icon name="trash" size={16} /> {t("admin.delete_folder")}</button>
+				</form>
+			</div>
+		</div>
 	</div>
 </Portal>

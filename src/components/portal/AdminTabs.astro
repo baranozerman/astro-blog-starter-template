@@ -1,0 +1,23 @@
+---
+import Icon from "./Icon.astro";
+
+const { t } = Astro.locals;
+const path = Astro.url.pathname.replace(/\/+$/, "");
+const tabs = [
+	{ href: "/portal/admin", label: t("admin.tab_overview"), icon: "activity" as const, active: path === "/portal/admin" },
+	{ href: "/portal/admin/users", label: t("admin.tab_users"), icon: "users" as const, active: path.startsWith("/portal/admin/users") },
+	{ href: "/portal/admin/folders", label: t("admin.tab_folders"), icon: "folder" as const, active: path.startsWith("/portal/admin/folders") },
+	{ href: "/portal/admin/access", label: t("admin.tab_access"), icon: "shield" as const, active: path.startsWith("/portal/admin/access") },
+];
+---
+
+<nav class="admin-tabs" aria-label={t("admin.title")}>
+	{
+		tabs.map((tab) => (
+			<a href={tab.href} class:list={{ active: tab.active }} aria-current={tab.active ? "page" : undefined}>
+				<Icon name={tab.icon} size={16} />
+				<span>{tab.label}</span>
+			</a>
+		))
+	}
+</nav>

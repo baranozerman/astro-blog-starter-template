@@ -1,0 +1,67 @@
+---
+import { LEVELS, type Level } from "../../lib/admin";
+
+interface Props {
+	name: string;
+	value: Level;
+	label: string;
+}
+
+const { name, value, label } = Astro.props;
+const { t } = Astro.locals;
+const text: Record<Level, string> = {
+	none: t("admin.level_none"),
+	read: t("admin.level_read"),
+	upload: t("admin.level_upload"),
+	both: t("admin.level_both"),
+};
+---
+
+<select class="level" name={name} data-level={value} data-initial={value} aria-label={label}>
+	{LEVELS.map((l) => <option value={l} selected={l === value}>{text[l]}</option>)}
+</select>
+
+<script>
+	// Shared by every form that contains access selects (matrix, user page, folder page).
+	const changed = (s: HTMLSelectElement) => s.value !== s.dataset.initial;
+
+	function refresh(form: HTMLFormElement | null) {
+		if (!form) return;
+		const selects = [...form.querySelectorAll<HTMLSelectElement>("select.level")];
+		const n = selects.filter(changed).length;
+		const bar = form.querySelector<HTMLElement>("[data-save-bar]");
+		if (!bar) return;
+		bar.classList.toggle("dirty", n > 0);
+		const count = bar.querySelector<HTMLElement>("[data-count]");
+		if (count) {
+			const [one, many] = (bar.dataset.template ?? "{n}").split("|");
+			count.textContent = (n === 1 || !many ? one : many).replace("{n}", String(n));
+		}
+	}
+
+	document.addEventListener("change", (e) => {
+		const s = e.target as HTMLSelectElement;
+		if (!s.matches?.("select.level")) return;
+		s.dataset.level = s.value;
+		s.classList.toggle("changed", changed(s));
+		refresh(s.form);
+	});
+
+	for (const form of document.querySelectorAll<HTMLFormElement>("form[data-access-form]")) {
+		// Only send cells that actually changed.
+		form.addEventListener("submit", () => {
+			for (const s of form.querySelectorAll<HTMLSelectElement>("select.level")) {
+				if (!changed(s)) s.disabled = true;
+			}
+		});
+		form.querySelector("[data-reset]")?.addEventListener("click", () => {
+			for (const s of form.querySelectorAll<HTMLSelectElement>("select.level")) {
+				s.value = s.dataset.initial ?? "none";
+				s.dataset.level = s.value;
+				s.classList.remove("changed");
+			}
+			refresh(form);
+		});
+		refresh(form);
+	}
+</script>

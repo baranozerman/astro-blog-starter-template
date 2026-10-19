@@ -13,7 +13,11 @@ Cloudflare Workers üzerinde çalışır: **D1** (kullanıcılar, klasörler, iz
 - Dosya yöneticisi: sınırsız alt klasör, yeniden adlandırma, taşıma, toplu seçim ile taşı/sil, arama, sürükle-bırak yükleme
   - Yöneticiler her şeyi yönetir; müşteriler yalnızca kendi oluşturdukları klasör ve dosyaları (klasörleri yalnızca boşken silebilir)
   - Veritabanı şema güncellemeleri (ör. alt klasör desteği) uygulama açılırken otomatik uygulanır (`src/lib/schema.ts`)
-- Yönetici paneli (`/portal/admin`): kullanıcı ve klasör oluşturma, izin verme, şifre sıfırlama, hesabı pasifleştirme, son etkinlikler (giriş, yükleme, indirme, silme)
+- Yönetici paneli (`/portal/admin`): Genel bakış, Kullanıcılar, Klasörler ve **Erişim** sekmeleri
+  - **Erişim matrisi** (`/portal/admin/access`): tüm müşteriler × ana klasörler tek tabloda; her hücrede Erişim yok / Görüntüle / Yükle / Görüntüle + yükle seçilir, değişiklikler tek seferde kaydedilir
+  - Kullanıcı sayfası: profil, son giriş, bilgileri düzenleme, şifre üretme/sıfırlama, giriş bilgilerini kopyalama, klasör erişimleri, silme
+  - Klasör sayfası: boyut/dosya istatistikleri, hangi müşterinin erişebildiği, düzenleme, silme
+  - Son etkinlikler (giriş, yükleme, indirme, silme, izin değişiklikleri)
 - Müşteriler kendi şifrelerini "Hesabım" sayfasından değiştirebilir
 - **Türkçe / İngilizce arayüz:** üst menüde ve giriş ekranında TR | EN seçici; seçim tarayıcıda hatırlanır.
   İlk ziyarette tarayıcı dili Türkçe ise Türkçe, değilse İngilizce açılır. Tüm metinler `src/lib/i18n.ts` içinde.
@@ -53,10 +57,9 @@ npm run preview
 
 ## Kullanım
 
-1. **Yönetim → Yeni klasör**: örn. her müşteri için bir klasör ("ACME – Teknik Çizimler").
-2. **Yönetim → Yeni kullanıcı**: müşteri hesabı ve geçici şifre oluşturun.
-3. Kullanıcının (veya klasörün) sayfasında hangi klasörde **Görüntüle** / **Yükle** izni olacağını işaretleyin.
-4. Müşteriye portal adresini ve geçici şifresini iletin.
+1. **Yönetim → Yeni ana klasör**: örn. her müşteri için bir klasör ("ACME – Teknik Çizimler"). Oluştururken hangi müşterilerin erişeceğini de seçebilirsiniz.
+2. **Yönetim → Yeni kullanıcı**: müşteri hesabı oluşturun; geçici şifre otomatik üretilir, başlangıç klasör erişimleri aynı pencereden seçilir. **Giriş bilgilerini kopyala** ile adres + e-posta + şifreyi panoya alıp müşteriye iletin.
+3. Sonradan değişiklik için **Yönetim → Erişim** matrisini, ya da kullanıcının / klasörün kendi sayfasını kullanın. Alt klasörler ana klasörün iznini devralır.
 
 ## Dosyaları kendi NAS'ımızda tutmak (Synology)
 

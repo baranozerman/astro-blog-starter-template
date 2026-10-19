@@ -1,105 +1,74 @@
 ---
 import Portal from "../../../layouts/Portal.astro";
-import { hashPassword, passwordProblem } from "../../../lib/auth";
 import Icon from "../../../components/portal/Icon.astro";
-import { audit, formatBytes, formatDate } from "../../../lib/portal";
+import AdminTabs from "../../../components/portal/AdminTabs.astro";
+import { formatBytes, formatDate } from "../../../lib/portal";
 import { isMessageKey } from "../../../lib/i18n";
 
 export const prerender = false;
 
 const { DB } = Astro.locals.runtime.env;
-const admin = Astro.locals.user!;
 const { lang, t } = Astro.locals;
 
-let error = "";
-if (Astro.request.method === "POST") {
-	const form = await Astro.request.formData();
-	const action = form.get("action");
-
-	if (action === "create_user") {
-		const email = String(form.get("email") ?? "").trim().toLowerCase();
-		const name = String(form.get("name") ?? "").trim();
-		const company = String(form.get("company") ?? "").trim();
-		const role = form.get("role") === "admin" ? "admin" : "customer";
-		const password = String(form.get("password") ?? "");
-		error = !email || !name ? t("err.name_email_required") : passwordProblem(password, t);
-		if (!error) {
-			const exists = await DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
-			if (exists) return Astro.redirect("/portal/admin?err=exists");
-			const { meta } = await DB.prepare(
-				"INSERT INTO users (email, name, company, password_hash, role) VALUES (?, ?, ?, ?, ?)",
-			)
-				.bind(email, name, company, await hashPassword(password), role)
-				.run();
-			await audit(DB, admin.id, "user_create", email).run();
-			return Astro.redirect(`/portal/admin/users/${meta.last_row_id}?ok=created`);
-		}
-	}
-
-	if (action === "create_folder") {
-		const name = String(form.get("name") ?? "").trim();
-		const description = String(form.get("description") ?? "").trim();
-		if (!name) return Astro.redirect("/portal/admin?err=invalid");
-		const { meta } = await DB.prepare("INSERT INTO folders (name, description) VALUES (?, ?)")
-			.bind(name, description)
-			.run();
-		await audit(DB, admin.id, "folder_create", name).run();
-		return Astro.redirect(`/portal/admin/folders/${meta.last_row_id}?ok=created`);
-	}
-}
-
-const [users, folders, activity, totals] = await DB.batch<any>([
+const [counts, activity] = await DB.batch<any>([
 	DB.prepare(
-		`SELECT u.id, u.email, u.name, u.company, u.role, u.active, u.locked_until,
-		        (SELECT COUNT(*) FROM permissions p WHERE p.user_id = u.id AND (p.can_read = 1 OR p.can_upload = 1)) AS folder_count
-		 FROM users u ORDER BY u.role, u.company COLLATE NOCASE, u.name COLLATE NOCASE`,
+		`SELECT (SELECT COUNT(*) FROM users WHERE role = 'customer') AS customers,
+		        (SELECT COUNT(*) FROM folders WHERE parent_id IS NULL) AS roots,
+		        (SELECT COUNT(*) FROM files) AS files,
+		        (SELECT COALESCE(SUM(size), 0) FROM files) AS bytes`,
 	),
 	DB.prepare(
-		`WITH RECURSIVE tree(root_id, id) AS (
-			SELECT id, id FROM folders WHERE parent_id IS NULL
-			UNION ALL
-			SELECT tree.root_id, f.id FROM folders f JOIN tree ON f.parent_id = tree.id
-		)
-		SELECT f.id, f.name, f.description,
-		       (SELECT COUNT(*) FROM files WHERE folder_id IN (SELECT id FROM tree WHERE root_id = f.id)) AS file_count,
-		       (SELECT COUNT(*) FROM tree WHERE root_id = f.id) - 1 AS sub_count,
-		       (SELECT COUNT(*) FROM permissions p WHERE p.folder_id = f.id AND (p.can_read = 1 OR p.can_upload = 1)) AS user_count
-		FROM folders f WHERE f.parent_id IS NULL ORDER BY f.name COLLATE NOCASE`,
-	),
-	DB.prepare(
-		`SELECT a.action, a.detail, a.created_at, u.name, u.email
+		`SELECT a.action, a.detail, a.created_at, u.id AS user_id, u.name
 		 FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
-		 ORDER BY a.id DESC LIMIT 50`,
+		 ORDER BY a.id DESC LIMIT 40`,
 	),
-	DB.prepare("SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files"),
 ]);
-const customerCount = users.results.filter((u: any) => u.role === "customer").length;
+const c = counts.results[0];
 const stats = [
-	{ icon: "users" as const, value: customerCount, label: t("admin.stat_customers") },
-	{ icon: "folder" as const, value: folders.results.length, label: t("admin.stat_folders") },
-	{ icon: "file" as const, value: totals.results[0].files, label: t("admin.stat_files") },
-	{ icon: "database" as const, value: formatBytes(totals.results[0].bytes, lang), label: t("admin.stat_size") },
+	{ icon: "users" as const, value: c.customers, label: t("admin.stat_customers"), href: "/portal/admin/users" },
+	{ icon: "folder" as const, value: c.roots, label: t("admin.stat_folders"), href: "/portal/admin/folders" },
+	{ icon: "file" as const, value: c.files, label: t("admin.stat_files"), href: "/portal/admin/folders" },
+	{ icon: "database" as const, value: formatBytes(c.bytes, lang), label: t("admin.stat_size"), href: "/portal/admin/folders" },
 ];
-
 const actionLabel = (action: string) => {
 	const key = `action.${action}`;
 	return isMessageKey(key) ? t(key) : action;
 };
-const now = Math.floor(Date.now() / 1000);
+const actionIcon: Record<string, "upload" | "download" | "trash" | "user" | "folder" | "shield" | "logout" | "pencil" | "move"> = {
+	upload: "upload",
+	download: "download",
+	delete: "trash",
+	folder_delete: "trash",
+	user_delete: "trash",
+	login: "logout",
+	user_create: "user",
+	user_update: "user",
+	folder_create: "folder",
+	folder_update: "folder",
+	permissions: "shield",
+	rename: "pencil",
+	move: "move",
+};
 ---
 
-<Portal title={t("admin.title")} error={error}>
+<Portal title={t("admin.title")}>
 	<div class="page-head">
 		<div>
 			<h1>{t("admin.title")}</h1>
 			<p class="muted">{t("admin.lead")}</p>
 		</div>
+		<div class="head-actions">
+			<a class="btn glass" href="/portal/admin/folders#new"><Icon name="folderPlus" /> {t("admin.new_root")}</a>
+			<a class="btn" href="/portal/admin/users#new"><Icon name="plus" /> {t("admin.new_user")}</a>
+		</div>
 	</div>
+
+	<AdminTabs />
 
 	<div class="stats">
 		{
 			stats.map((s) => (
-				<div class="stat">
+				<a class="stat" href={s.href}>
 					<span class="stat-icon">
 						<Icon name={s.icon} size={20} />
 					</span>
@@ -107,127 +76,38 @@ const now = Math.floor(Date.now() / 1000);
 						<strong>{s.value}</strong>
 						<span>{s.label}</span>
 					</div>
-				</div>
+				</a>
 			))
 		}
 	</div>
 
-	<div class="grid-2">
-		<div class="panel">
-			<h2>{t("admin.new_user")}</h2>
-			<form method="post" class="stack">
-				<input type="hidden" name="action" value="create_user" />
-				<label>{t("common.name")} <input type="text" name="name" required /></label>
-				<label>{t("common.company")} <input type="text" name="company" /></label>
-				<label>{t("common.email")} <input type="email" name="email" required autocomplete="off" /></label>
-				<label>
-					{t("admin.temp_password")}
-					<input type="text" name="password" required minlength="10" autocomplete="off" />
-					<span class="hint">{t("admin.temp_password_hint")}</span>
-				</label>
-				<label>
-					{t("common.role")}
-					<select name="role">
-						<option value="customer">{t("common.customer")}</option>
-						<option value="admin">{t("admin.role_admin_full")}</option>
-					</select>
-				</label>
-				<div><button type="submit" class="btn">{t("admin.create_user")}</button></div>
-			</form>
-		</div>
-
-		<div class="panel" id="yeni-klasor">
-			<h2>{t("admin.new_root")}</h2>
-			<p class="hint">{t("admin.new_root_hint")}</p>
-			<form method="post" class="stack">
-				<input type="hidden" name="action" value="create_folder" />
-				<label>{t("common.folder_name")} <input type="text" name="name" required placeholder={t("admin.folder_placeholder")} /></label>
-				<label>{t("common.description")} <textarea name="description" rows="3"></textarea></label>
-				<div><button type="submit" class="btn">{t("admin.create_folder")}</button></div>
-			</form>
-		</div>
-	</div>
-
 	<div class="panel">
-		<h2>{t("admin.users_n", { n: users.results.length })}</h2>
-		<div class="table-wrap">
-			<table>
-				<thead>
-					<tr><th>{t("fm.col_name")}</th><th>{t("common.company")}</th><th>{t("common.email")}</th><th>{t("common.role")}</th><th>{t("admin.col_folders")}</th><th /></tr>
-				</thead>
-				<tbody>
-					{
-						users.results.map((u: any) => (
-							<tr>
-								<td>
-									{u.name}{" "}
-									{!u.active && <span class="badge red">{t("common.inactive")}</span>}
-									{u.locked_until > now && <span class="badge red">{t("common.locked")}</span>}
-								</td>
-								<td>{u.company}</td>
-								<td>{u.email}</td>
-								<td>{u.role === "admin" ? <span class="badge">{t("common.admin")}</span> : <span class="badge gray">{t("common.customer")}</span>}</td>
-								<td>{u.role === "admin" ? t("admin.all") : u.folder_count}</td>
-								<td class="actions"><a class="btn small secondary" href={`/portal/admin/users/${u.id}`}>{t("admin.edit")}</a></td>
-							</tr>
-						))
-					}
-				</tbody>
-			</table>
+		<div class="panel-head">
+			<h2>{t("admin.activity")}</h2>
 		</div>
-	</div>
-
-	<div class="panel">
-		<h2>{t("admin.folders_n", { n: folders.results.length })}</h2>
-		{
-			folders.results.length === 0 ? (
-				<p class="empty">{t("admin.no_folders")}</p>
-			) : (
-				<div class="table-wrap">
-					<table>
-						<thead>
-							<tr><th>{t("fm.col_name")}</th><th>{t("common.description")}</th><th>{t("admin.col_files")}</th><th>{t("admin.col_customers")}</th><th /></tr>
-						</thead>
-						<tbody>
-							{folders.results.map((f: any) => (
-								<tr>
-									<td><a href={`/portal/folders/${f.id}`}>{f.name}</a></td>
-									<td class="muted">{f.description}</td>
-									<td>{f.file_count}{f.sub_count > 0 && <span class="muted"> · {t("common.subfolders_n", { n: f.sub_count })}</span>}</td>
-									<td>{f.user_count}</td>
-									<td class="actions"><a class="btn small secondary" href={`/portal/admin/folders/${f.id}`}>{t("admin.settings")}</a></td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-			)
-		}
-	</div>
-
-	<div class="panel">
-		<h2>{t("admin.activity")}</h2>
 		{
 			activity.results.length === 0 ? (
 				<p class="empty">{t("admin.no_activity")}</p>
 			) : (
-				<div class="table-wrap">
-					<table>
-						<thead>
-							<tr><th>{t("admin.col_date")}</th><th>{t("admin.col_user")}</th><th>{t("admin.col_action")}</th><th>{t("admin.col_detail")}</th></tr>
-						</thead>
-						<tbody>
-							{activity.results.map((a: any) => (
-								<tr>
-									<td>{formatDate(a.created_at, lang)}</td>
-									<td>{a.name ?? t("admin.deleted_user")}</td>
-									<td>{actionLabel(a.action)}</td>
-									<td class="muted">{a.detail}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
+				<ul class="timeline">
+					{activity.results.map((a: any) => (
+						<li>
+							<span class="timeline-icon">
+								<Icon name={actionIcon[a.action] ?? "activity"} size={15} />
+							</span>
+							<div>
+								<p>
+									<strong>
+										{a.user_id ? <a href={`/portal/admin/users/${a.user_id}`}>{a.name}</a> : t("admin.deleted_user")}
+									</strong>{" "}
+									· {actionLabel(a.action)}
+								</p>
+								{a.detail && <p class="muted small">{a.detail}</p>}
+							</div>
+							<time class="muted small">{formatDate(a.created_at, lang)}</time>
+						</li>
+					))}
+				</ul>
 			)
 		}
 	</div>

@@ -1,0 +1,212 @@
+---
+import Portal from "../../../../layouts/Portal.astro";
+import Icon from "../../../../components/portal/Icon.astro";
+import AdminTabs from "../../../../components/portal/AdminTabs.astro";
+import AccessSelect from "../../../../components/portal/AccessSelect.astro";
+import { hashPassword, passwordProblem } from "../../../../lib/auth";
+import { audit, formatRelative } from "../../../../lib/portal";
+import { listRoots, listUsers, parseLevel, randomPassword, saveAccess } from "../../../../lib/admin";
+import { rawMessage } from "../../../../lib/i18n";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const admin = Astro.locals.user!;
+const { lang, t } = Astro.locals;
+
+let error = "";
+const values = { name: "", company: "", email: "", password: randomPassword(), role: "customer" };
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	values.email = String(form.get("email") ?? "").trim().toLowerCase();
+	values.name = String(form.get("name") ?? "").trim();
+	values.company = String(form.get("company") ?? "").trim();
+	values.role = form.get("role") === "admin" ? "admin" : "customer";
+	values.password = String(form.get("password") ?? "");
+	error = !values.email || !values.name ? t("err.name_email_required") : passwordProblem(values.password, t);
+	if (!error) {
+		const exists = await DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(values.email).first();
+		if (exists) return Astro.redirect("/portal/admin/users?err=exists");
+		const { meta } = await DB.prepare(
+			"INSERT INTO users (email, name, company, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+		)
+			.bind(values.email, values.name, values.company, await hashPassword(values.password), values.role)
+			.run();
+		const userId = Number(meta.last_row_id);
+		await audit(DB, admin.id, "user_create", values.email).run();
+		// Folder access chosen in the same dialog (customers only).
+		if (values.role === "customer") {
+			const roots = new Set((await listRoots(DB)).map((r) => r.id));
+			const changes = [...form.entries()]
+				.map(([k, v]) => ({ m: /^init:(\d+)$/.exec(k), level: parseLevel(v) }))
+				.filter((x) => x.m && x.level && x.level !== "none" && roots.has(Number(x.m[1])))
+				.map((x) => ({ userId, folderId: Number(x.m![1]), level: x.level! }));
+			await saveAccess(DB, admin.id, changes);
+		}
+		return Astro.redirect(`/portal/admin/users/${userId}?ok=created`);
+	}
+}
+
+const [users, roots] = await Promise.all([listUsers(DB), listRoots(DB)]);
+const now = Math.floor(Date.now() / 1000);
+const initials = (name: string) =>
+	name
+		.split(/\s+/)
+		.filter(Boolean)
+		.slice(0, 2)
+		.map((w) => w[0]!.toLocaleUpperCase(lang))
+		.join("");
+const credentialsTemplate = rawMessage(lang, "admin.credentials_text");
+const portalUrl = `${Astro.url.origin}/portal`;
+---
+
+<Portal title={t("admin.tab_users")} error={error}>
+	<div class="page-head">
+		<div>
+			<h1>{t("admin.tab_users")}</h1>
+			<p class="muted">{t("admin.users_lead")}</p>
+		</div>
+		<div class="head-actions">
+			<button type="button" class="btn" data-open="dlg-user"><Icon name="plus" /> {t("admin.new_user")}</button>
+		</div>
+	</div>
+
+	<AdminTabs />
+
+	<div class="panel">
+		<div class="panel-head">
+			<h2>{t("admin.users_n", { n: users.length })}</h2>
+			<div class="search">
+				<Icon name="search" size={16} />
+				<input type="search" data-filter="#user-list" placeholder={t("admin.search_users")} aria-label={t("admin.search_users")} />
+			</div>
+		</div>
+		{
+			users.length === 0 ? (
+				<p class="empty">{t("admin.no_users")}</p>
+			) : (
+				<div class="rows" id="user-list">
+					{users.map((u) => (
+						<a class="row" href={`/portal/admin/users/${u.id}`} data-search={`${u.name} ${u.company} ${u.email}`.toLocaleLowerCase(lang)}>
+							<span class="avatar">{initials(u.name)}</span>
+							<span class="row-main">
+								<strong>{u.name}</strong>
+								<span class="muted">{u.email}</span>
+							</span>
+							<span class="row-col hide-sm">{u.company || "—"}</span>
+							<span class="row-col">
+								{u.role === "admin" ? (
+									<span class="badge">{t("common.admin")}</span>
+								) : (
+									<span class="badge gray">{t("admin.access_n", { n: u.folder_count })}</span>
+								)}
+								{!u.active && <span class="badge red">{t("common.inactive")}</span>}
+								{u.locked_until && u.locked_until > now && <span class="badge red">{t("common.locked")}</span>}
+							</span>
+							<span class="row-col muted hide-sm">
+								{u.last_login ? formatRelative(u.last_login, lang, t) : t("admin.never")}
+							</span>
+							<Icon name="chevron" size={18} class="row-arrow" />
+						</a>
+					))}
+					<p class="empty" data-no-match hidden>{t("admin.no_match")}</p>
+				</div>
+			)
+		}
+	</div>
+
+	<dialog id="dlg-user" class="dialog wide">
+		<form method="post" class="stack" id="user-form">
+			<div class="dialog-head">
+				<h2>{t("admin.new_user")}</h2>
+				<button type="button" class="icon-btn dark" data-close aria-label={t("common.cancel")}><Icon name="x" /></button>
+			</div>
+			<div class="form-grid">
+				<label>{t("common.name")} <input type="text" name="name" value={values.name} required /></label>
+				<label>{t("common.company")} <input type="text" name="company" value={values.company} /></label>
+				<label>{t("common.email")} <input type="email" name="email" value={values.email} required autocomplete="off" /></label>
+				<label>
+					{t("common.role")}
+					<select name="role" id="role-select">
+						<option value="customer" selected={values.role === "customer"}>{t("common.customer")}</option>
+						<option value="admin" selected={values.role === "admin"}>{t("admin.role_admin_full")}</option>
+					</select>
+				</label>
+			</div>
+			<label>
+				{t("admin.temp_password")}
+				<span class="input-row">
+					<input type="text" name="password" id="pw" value={values.password} required minlength="10" autocomplete="off" spellcheck="false" />
+					<button type="button" class="btn secondary small" id="pw-gen"><Icon name="activity" size={14} /> {t("admin.generate")}</button>
+				</span>
+				<span class="hint">{t("admin.temp_password_hint")}</span>
+			</label>
+
+			<fieldset class="access-fieldset" id="init-access">
+				<legend>{t("admin.initial_access")}</legend>
+				<p class="hint">{t("admin.initial_access_hint")}</p>
+				{
+					roots.length === 0 ? (
+						<p class="muted">{t("admin.no_root_folders")}</p>
+					) : (
+						<div class="access-list">
+							{roots.map((r) => (
+								<div class="access-item">
+									<span class="file-type folder"><Icon name="folder" size={18} /></span>
+									<span class="access-name">{r.name}</span>
+									<AccessSelect name={`init:${r.id}`} value="none" label={r.name} />
+								</div>
+							))}
+						</div>
+					)
+				}
+			</fieldset>
+
+			<div class="dialog-actions spread">
+				<button type="button" class="btn secondary" id="copy-creds" data-done={t("admin.copied")}>
+					<Icon name="file" size={16} /> <span>{t("admin.copy_credentials")}</span>
+				</button>
+				<div class="dialog-actions">
+					<button type="button" class="btn secondary" data-close>{t("common.cancel")}</button>
+					<button type="submit" class="btn">{t("admin.create_user")}</button>
+				</div>
+			</div>
+		</form>
+	</dialog>
+</Portal>
+
+<script define:vars={{ credentialsTemplate, portalUrl, reopen: Boolean(error) }}>
+	const dlg = document.getElementById("dlg-user");
+	const open = () => dlg.showModal();
+	document.querySelector("[data-open=dlg-user]")?.addEventListener("click", open);
+	for (const b of dlg.querySelectorAll("[data-close]")) b.addEventListener("click", () => dlg.close());
+	if (location.hash === "#new" || reopen) open();
+	addEventListener("hashchange", () => location.hash === "#new" && !dlg.open && open());
+
+	// Admins see every folder, so folder access only applies to customers.
+	const role = document.getElementById("role-select");
+	const access = document.getElementById("init-access");
+	const syncRole = () => (access.hidden = role.value === "admin");
+	role.addEventListener("change", syncRole);
+	syncRole();
+
+	const pw = document.getElementById("pw");
+	document.getElementById("pw-gen").addEventListener("click", () => {
+		const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+		pw.value = Array.from(crypto.getRandomValues(new Uint8Array(14)), (b) => alphabet[b % alphabet.length]).join("");
+	});
+
+	const copy = document.getElementById("copy-creds");
+	copy.addEventListener("click", async () => {
+		const form = document.getElementById("user-form");
+		const text = credentialsTemplate
+			.replace("{url}", portalUrl)
+			.replace("{email}", form.elements.email.value)
+			.replace("{password}", form.elements.password.value);
+		await navigator.clipboard.writeText(text);
+		const label = copy.querySelector("span");
+		const before = label.textContent;
+		label.textContent = copy.dataset.done;
+		setTimeout(() => (label.textContent = before), 1800);
+	});
+</script>

@@ -147,6 +147,39 @@ const initials = (user?.name ?? "")
 		<p class="credit">{t(backdrop.caption)}</p>
 
 		<script>
+			// Live search: <input data-filter="#list"> hides items whose data-search doesn't match.
+			for (const input of document.querySelectorAll<HTMLInputElement>("input[data-filter]")) {
+				const list = document.querySelector<HTMLElement>(input.dataset.filter!);
+				if (!list) continue;
+				const noMatch =
+					list.querySelector<HTMLElement>("[data-no-match]") ??
+					list.closest(".panel")?.querySelector<HTMLElement>("[data-no-match]");
+				input.addEventListener("input", () => {
+					const q = input.value.trim().toLocaleLowerCase(document.documentElement.lang);
+					let shown = 0;
+					for (const item of list.querySelectorAll<HTMLElement>("[data-search]")) {
+						const hit = !q || item.dataset.search!.includes(q);
+						item.hidden = !hit;
+						if (hit) shown++;
+					}
+					if (noMatch) noMatch.hidden = shown > 0;
+				});
+			}
+			// Dialogs: buttons with data-open-dialog="id", [data-close] inside, and
+			// dialogs with data-open-on-hash="new" open when the URL ends in #new.
+			for (const btn of document.querySelectorAll<HTMLElement>("[data-open-dialog]")) {
+				btn.addEventListener("click", () =>
+					document.querySelector<HTMLDialogElement>(`#${btn.dataset.openDialog}`)?.showModal(),
+				);
+			}
+			for (const dlg of document.querySelectorAll<HTMLDialogElement>("dialog[data-open-on-hash]")) {
+				for (const b of dlg.querySelectorAll("[data-close]")) b.addEventListener("click", () => dlg.close());
+				const openIfHash = () => {
+					if (location.hash === `#${dlg.dataset.openOnHash}` && !dlg.open) dlg.showModal();
+				};
+				openIfHash();
+				addEventListener("hashchange", openIfHash);
+			}
 			// Forms that need a confirmation carry the (translated) question in data-confirm.
 			for (const form of document.querySelectorAll<HTMLFormElement>("form[data-confirm]")) {
 				form.addEventListener("submit", (e) => {
