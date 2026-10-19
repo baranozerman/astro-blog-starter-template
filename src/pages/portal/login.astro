@@ -19,13 +19,13 @@ if (Astro.request.method === "POST") {
 	const form = await Astro.request.formData();
 	email = String(form.get("email") ?? "").trim().toLowerCase();
 	const password = String(form.get("password") ?? "");
-	const result = await attemptLogin(DB, email, password);
+	const result = await attemptLogin(DB, Astro.request, email, password);
 	if ("userId" in result) {
 		await createSession(DB, Astro.cookies, Astro.url, result.userId);
 		await audit(DB, result.userId, "login").run();
 		return Astro.redirect(next);
 	}
-	error = result.error === "locked" ? t("err.locked") : t("err.bad_login");
+	error = { locked: t("err.locked"), throttled: t("err.throttled"), invalid: t("err.bad_login") }[result.error];
 }
 ---
 
@@ -44,4 +44,5 @@ if (Astro.request.method === "POST") {
 		<button type="submit" class="btn block">{t("login.submit")}</button>
 	</form>
 	<p class="hint">{t("login.help")}</p>
+	<p class="hint privacy-link"><a href="/portal/privacy">{t("privacy.link")}</a></p>
 </Portal>

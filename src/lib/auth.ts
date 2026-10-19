@@ -7,6 +7,9 @@ const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 const PBKDF2_ITERATIONS = 100_000;
 const MAX_FAILED_LOGINS = 5;
 const LOCK_SECONDS = 15 * 60;
+// Per client: at most this many failed sign-ins (any account) per window.
+const MAX_CLIENT_FAILURES = 20;
+const CLIENT_WINDOW_SECONDS = 15 * 60;
 export const MIN_PASSWORD_LENGTH = 10;
 
 export type Role = "admin" | "customer";
@@ -72,9 +75,37 @@ export function passwordProblem(password: string, t: Translate): string {
 	return password.length < MIN_PASSWORD_LENGTH ? t("err.password_short", { n: MIN_PASSWORD_LENGTH }) : "";
 }
 
-export type LoginResult = { userId: number } | { error: "invalid" | "locked" };
+export type LoginResult = { userId: number } | { error: "invalid" | "locked" | "throttled" };
 
-export async function attemptLogin(db: D1Database, email: string, password: string): Promise<LoginResult> {
+/** Identifies the client by a hash of its IP, so raw addresses are never stored. */
+async function clientKey(request: Request) {
+	return sha256Hex(`login:${request.headers.get("CF-Connecting-IP") ?? "local"}`);
+}
+
+export async function attemptLogin(
+	db: D1Database,
+	request: Request,
+	email: string,
+	password: string,
+): Promise<LoginResult> {
+	const client = await clientKey(request);
+	const recent = await db
+		.prepare("SELECT COUNT(*) AS n FROM login_failures WHERE client = ? AND at > ?")
+		.bind(client, now() - CLIENT_WINDOW_SECONDS)
+		.first<number>("n");
+	if ((recent ?? 0) >= MAX_CLIENT_FAILURES) return { error: "throttled" };
+
+	const result = await checkCredentials(db, email, password);
+	if ("error" in result) {
+		await db.batch([
+			db.prepare("DELETE FROM login_failures WHERE at < ?").bind(now() - CLIENT_WINDOW_SECONDS),
+			db.prepare("INSERT INTO login_failures (client, at) VALUES (?, ?)").bind(client, now()),
+		]);
+	}
+	return result;
+}
+
+async function checkCredentials(db: D1Database, email: string, password: string): Promise<LoginResult> {
 	const row = await db
 		.prepare(
 			"SELECT id, password_hash, active, failed_logins, locked_until FROM users WHERE email = ?",

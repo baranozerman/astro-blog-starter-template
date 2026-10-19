@@ -105,6 +105,26 @@ Kaydettikten sonra portala bir test dosyası yükleyin; NAS'ta `portal/<klasör 
 - NAS'taki dosyaları elle **taşımayın veya yeniden adlandırmayın**; portal dosyayı bulamaz.
 - NAS'a elle kopyalanan dosyalar portalda görünmez; portaldan yüklenmelidir.
 
+## Güvenlik ve gizlilik
+
+Portalda yerleşik olanlar:
+
+- Şifreler PBKDF2 (100.000 tur, tuzlu) ile saklanır; oturum çerezleri `HttpOnly`, `Secure`, `SameSite=Lax`, veritabanında yalnızca özetleri tutulur.
+- 5 hatalı denemede hesap 15 dk kilitlenir; aynı IP'den 15 dk içinde 20 hatalı denemeden sonra giriş geçici olarak durdurulur (IP'nin yalnızca özeti, 15 dk tutulur).
+- Klasör bazlı yetki her sayfada ve her indirmede sunucuda kontrol edilir; dosyalar herkese açık bağlantıyla paylaşılmaz.
+- Form gönderimlerinde CSRF koruması (`checkOrigin`).
+- Güvenlik başlıkları: HSTS, CSP (yalnızca kendi alan adı; üçüncü taraf kaynak yok), `X-Frame-Options: DENY`, `nosniff`, `Permissions-Policy`, portal sayfalarında `no-store`.
+- İndirilen dosyalar `sandbox` CSP ile sunulur; HTML/SVG gibi türler tarayıcıda açılmaz, her zaman indirilir.
+- Yazı tipleri sunucudan verilir (Google Fonts yok), çerez olarak yalnızca oturum ve dil kullanılır.
+- Gizlilik ve veri güvenliği / KVKK aydınlatma metni: `/portal/privacy` (metin `src/lib/privacy.ts` içinde, TR + EN). Giriş sayfasından ve Hesabım'dan bağlantı verilir.
+
+Cloudflare panelinden ayrıca önerilenler:
+
+- **Security → WAF → Rate limiting rules**: `/portal/login` için IP başına dakikada ~10 POST sınırı (ücretsiz planda 1 kural dahildir).
+- **SSL/TLS → Edge Certificates**: *Always Use HTTPS* açık, *Minimum TLS Version* 1.2.
+- Cloudflare hesabında iki adımlı doğrulama (2FA) açık olsun; portalın tüm verisi bu hesaptadır.
+- D1 veritabanı 30 gün geriye dönük geri yüklenebilir (Time Travel). R2 dosyaları için ayrı yedek planlayın (örn. NAS'a periyodik kopya).
+
 ## Görseller ve logo
 
 - Logo: `public/brand/` (sunumdaki logodan vektörleştirildi; `logo-h-*` yatay, `logo-*` dikey, `mark-*` yalnız simge)
