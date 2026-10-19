@@ -1,0 +1,79 @@
+---
+import Portal from "../../../layouts/Portal.astro";
+import Icon from "../../../components/portal/Icon.astro";
+import {
+	checkSecondFactor,
+	clientThrottled,
+	createSession,
+	endMfaChallenge,
+	failMfaChallenge,
+	getMfaChallenge,
+	recordClientFailure,
+} from "../../../lib/auth";
+import { audit, safeNext } from "../../../lib/portal";
+
+export const prerender = false;
+
+// Second sign-in step for accounts with two-factor authentication.
+const { DB } = Astro.locals.runtime.env;
+const { t } = Astro.locals;
+const next = safeNext(Astro.url.searchParams.get("next"));
+if (Astro.locals.user) return Astro.redirect(next);
+
+const challenge = await getMfaChallenge(DB, Astro.cookies);
+if (!challenge) return Astro.redirect(`/portal/login?err=mfa_expired&next=${encodeURIComponent(next)}`);
+
+let error = "";
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const code = String(form.get("code") ?? "");
+	if (await clientThrottled(DB, Astro.request)) {
+		error = t("err.throttled");
+	} else {
+		const used = await checkSecondFactor(DB, challenge.user_id, code, { allowRecovery: true });
+		if (used) {
+			await endMfaChallenge(DB, Astro.cookies, challenge);
+			await createSession(DB, Astro.cookies, Astro.url, challenge.user_id);
+			await audit(DB, challenge.user_id, "login", used === "recovery" ? t("mfa.audit_recovery") : "").run();
+			if (used === "recovery") {
+				return Astro.redirect(`/portal/account/2fa?ok=recovery_used`);
+			}
+			return Astro.redirect(next);
+		}
+		await recordClientFailure(DB, Astro.request);
+		if (!(await failMfaChallenge(DB, Astro.cookies, challenge))) {
+			return Astro.redirect(`/portal/login?err=mfa_expired&next=${encodeURIComponent(next)}`);
+		}
+		error = t("err.bad_code");
+	}
+}
+---
+
+<Portal title={t("mfa.verify_title")} bare error={error}>
+	<span class="legal-icon"><Icon name="shield" size={22} /></span>
+	<h2>{t("mfa.verify_title")}</h2>
+	<p class="lead">{t("mfa.verify_lead")}</p>
+	<form method="post" class="stack">
+		<label>
+			{t("mfa.code")}
+			<input
+				type="text"
+				name="code"
+				class="otp-input"
+				required
+				autocomplete="one-time-code"
+				inputmode="numeric"
+				maxlength="20"
+				autofocus
+				spellcheck="false"
+				placeholder="123 456"
+			/>
+		</label>
+		<button type="submit" class="btn block">{t("mfa.verify_submit")}</button>
+	</form>
+	<details class="recovery-help">
+		<summary>{t("mfa.lost_phone")}</summary>
+		<p class="hint">{t("mfa.lost_phone_body")}</p>
+	</details>
+	<p class="hint"><a href="/portal/login">{t("mfa.back_login")}</a></p>
+</Portal>

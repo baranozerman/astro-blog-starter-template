@@ -1,0 +1,222 @@
+---
+import { renderSVG } from "uqr";
+import Portal from "../../../layouts/Portal.astro";
+import Icon from "../../../components/portal/Icon.astro";
+import {
+	SESSION_COOKIE,
+	checkSecondFactor,
+	clearTotp,
+	destroyUserSessions,
+	issueRecoveryCodes,
+	remainingRecoveryCodes,
+	verifyPassword,
+} from "../../../lib/auth";
+import { formatSecret, newTotpSecret, totpUri, RECOVERY_CODE_COUNT } from "../../../lib/totp";
+import { audit } from "../../../lib/portal";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const user = Astro.locals.user!;
+const { t } = Astro.locals;
+const here = "/portal/account/2fa";
+
+const load = () =>
+	DB.prepare("SELECT totp_secret, totp_enabled, password_hash FROM users WHERE id = ?")
+		.bind(user.id)
+		.first<{ totp_secret: string | null; totp_enabled: number; password_hash: string }>();
+let row = (await load())!;
+
+let error = "";
+// Freshly issued recovery codes are shown once, in the response to the POST that created them.
+let codes: string[] | null = null;
+
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const action = form.get("action");
+	const code = String(form.get("code") ?? "");
+
+	if (action === "enable" && !row.totp_enabled) {
+		if (await checkSecondFactor(DB, user.id, code, { pendingSecret: true })) {
+			await DB.batch([
+				DB.prepare("UPDATE users SET totp_enabled = 1 WHERE id = ?").bind(user.id),
+				audit(DB, user.id, "2fa_enable"),
+			]);
+			codes = await issueRecoveryCodes(DB, user.id);
+			// Anyone signed in elsewhere with just the password is signed out.
+			await destroyUserSessions(DB, user.id, Astro.cookies.get(SESSION_COOKIE)?.value);
+		} else {
+			error = t("err.bad_code");
+		}
+	}
+
+	if (action === "regenerate" && row.totp_enabled) {
+		if (await checkSecondFactor(DB, user.id, code)) {
+			codes = await issueRecoveryCodes(DB, user.id);
+			await audit(DB, user.id, "2fa_codes").run();
+		} else {
+			error = t("err.bad_code");
+		}
+	}
+
+	if (action === "disable" && row.totp_enabled) {
+		if (await verifyPassword(String(form.get("password") ?? ""), row.password_hash)) {
+			await DB.batch([...clearTotp(DB, user.id), audit(DB, user.id, "2fa_disable")]);
+			return Astro.redirect(`${here}?ok=mfa_off`);
+		}
+		error = t("err.bad_current_password");
+	}
+	row = (await load())!;
+}
+
+// Setting up: keep one pending secret so reloading the page doesn't change the QR code.
+if (!row.totp_enabled && !row.totp_secret) {
+	row.totp_secret = newTotpSecret();
+	await DB.prepare("UPDATE users SET totp_secret = ?, totp_last_step = NULL WHERE id = ?").bind(row.totp_secret, user.id).run();
+}
+const enabled = row.totp_enabled === 1;
+const secret = row.totp_secret!;
+// Generated locally: the secret never leaves the server except in this page.
+const qr = enabled ? "" : renderSVG(totpUri(secret, user.email), { border: 2, pixelSize: 8, blackColor: "#0e2238" });
+const left = enabled ? await remainingRecoveryCodes(DB, user.id) : 0;
+---
+
+<Portal title={t("mfa.title")} error={error}>
+	<div class="page-head">
+		<div>
+			<nav class="breadcrumb">
+				<a href="/portal/account"><Icon name="user" size={14} /> {t("account.title")}</a>
+				<Icon name="chevron" size={14} />
+			</nav>
+			<h1>{t("mfa.title")}</h1>
+			<p class="muted">{t("mfa.lead")}</p>
+		</div>
+	</div>
+
+	{
+		codes ? (
+			<div class="panel recovery-panel">
+				<div class="panel-head">
+					<h2>
+						<Icon name="check" /> {t("mfa.codes_title")}
+					</h2>
+				</div>
+				<p>{t("mfa.codes_lead")}</p>
+				<ol class="recovery-codes" id="codes">
+					{codes.map((c) => (
+						<li>
+							<code>{c}</code>
+						</li>
+					))}
+				</ol>
+				<div class="dialog-actions spread">
+					<div class="dialog-actions">
+						<button type="button" class="btn secondary" id="copy-codes" data-done={t("admin.copied")}>
+							<Icon name="file" size={16} /> <span>{t("admin.copy")}</span>
+						</button>
+						<button type="button" class="btn secondary" id="download-codes">
+							<Icon name="download" size={16} /> {t("mfa.download")}
+						</button>
+					</div>
+					<a class="btn" href={here}>{t("mfa.codes_saved")}</a>
+				</div>
+			</div>
+		) : enabled ? (
+			<div class="grid-2">
+				<div class="panel">
+					<div class="mfa-status on">
+						<span class="mfa-status-icon"><Icon name="shield" size={22} /></span>
+						<div>
+							<strong>{t("mfa.on")}</strong>
+							<span class="muted">{t("mfa.on_body")}</span>
+						</div>
+					</div>
+					<h2 class="mt">{t("mfa.recovery")}</h2>
+					<p class:list={["muted", { "warn-text": left <= 3 }]}>{t("mfa.codes_left", { n: left, total: RECOVERY_CODE_COUNT })}</p>
+					<form method="post" class="stack">
+						<input type="hidden" name="action" value="regenerate" />
+						<label>
+							{t("mfa.code_now")}
+							<input type="text" name="code" class="otp-input" required autocomplete="one-time-code" inputmode="numeric" maxlength="7" placeholder="123 456" />
+						</label>
+						<div>
+							<button type="submit" class="btn secondary">{t("mfa.regenerate")}</button>
+						</div>
+					</form>
+				</div>
+				<div class="panel danger-zone">
+					<h2>{t("mfa.disable")}</h2>
+					<p class="hint">{t("mfa.disable_hint")}</p>
+					<form method="post" class="stack" data-confirm={t("mfa.disable_confirm")}>
+						<input type="hidden" name="action" value="disable" />
+						<label>
+							{t("account.current")}
+							<input type="password" name="password" required autocomplete="current-password" />
+						</label>
+						<div>
+							<button type="submit" class="btn danger">{t("mfa.disable")}</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		) : (
+			<div class="panel mfa-setup">
+				<ol class="mfa-steps">
+					<li>
+						<h3>{t("mfa.step1")}</h3>
+						<p class="muted">{t("mfa.step1_body")}</p>
+					</li>
+					<li>
+						<h3>{t("mfa.step2")}</h3>
+						<div class="qr-row">
+							<div class="qr" set:html={qr} role="img" aria-label={t("mfa.qr_alt")} />
+							<div>
+								<p class="muted">{t("mfa.manual")}</p>
+								<code class="secret">{formatSecret(secret)}</code>
+							</div>
+						</div>
+					</li>
+					<li>
+						<h3>{t("mfa.step3")}</h3>
+						<form method="post" class="inline-form">
+							<input type="hidden" name="action" value="enable" />
+							<input
+								type="text"
+								name="code"
+								class="otp-input"
+								required
+								autocomplete="one-time-code"
+								inputmode="numeric"
+								maxlength="7"
+								placeholder="123 456"
+								aria-label={t("mfa.code")}
+							/>
+							<button type="submit" class="btn">{t("mfa.enable")}</button>
+						</form>
+					</li>
+				</ol>
+			</div>
+		)
+	}
+</Portal>
+
+<script>
+	const list = document.getElementById("codes");
+	const text = () =>
+		[...(list?.querySelectorAll("code") ?? [])].map((c) => c.textContent).join("\n") + "\n";
+	const copy = document.getElementById("copy-codes");
+	copy?.addEventListener("click", async () => {
+		await navigator.clipboard.writeText(text());
+		const label = copy.querySelector("span")!;
+		const before = label.textContent;
+		label.textContent = copy.dataset.done ?? "";
+		setTimeout(() => (label.textContent = before), 1800);
+	});
+	document.getElementById("download-codes")?.addEventListener("click", () => {
+		const a = document.createElement("a");
+		a.href = URL.createObjectURL(new Blob([`Prodinox Portal\n\n${text()}`], { type: "text/plain" }));
+		a.download = "prodinox-recovery-codes.txt";
+		a.click();
+		URL.revokeObjectURL(a.href);
+	});
+</script>

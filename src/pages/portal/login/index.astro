@@ -1,7 +1,7 @@
 ---
-import Portal from "../../layouts/Portal.astro";
-import { attemptLogin, createSession } from "../../lib/auth";
-import { audit, safeNext } from "../../lib/portal";
+import Portal from "../../../layouts/Portal.astro";
+import { attemptLogin, createSession, hasTotp, startMfaChallenge } from "../../../lib/auth";
+import { audit, safeNext } from "../../../lib/portal";
 
 export const prerender = false;
 
@@ -21,6 +21,10 @@ if (Astro.request.method === "POST") {
 	const password = String(form.get("password") ?? "");
 	const result = await attemptLogin(DB, Astro.request, email, password);
 	if ("userId" in result) {
+		if (await hasTotp(DB, result.userId)) {
+			await startMfaChallenge(DB, Astro.cookies, Astro.url, result.userId);
+			return Astro.redirect(`/portal/login/verify?next=${encodeURIComponent(next)}`);
+		}
 		await createSession(DB, Astro.cookies, Astro.url, result.userId);
 		await audit(DB, result.userId, "login").run();
 		return Astro.redirect(next);

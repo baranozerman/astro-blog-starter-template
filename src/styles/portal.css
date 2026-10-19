@@ -2088,3 +2088,207 @@ a.access-name:hover {
 .legal li + li {
 	margin-top: 6px;
 }
+
+/* Two-step verification */
+.mfa-status {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin: 6px 0 18px;
+	padding: 14px 16px;
+	border-radius: var(--radius);
+	background: #f6f8fb;
+	border: 1px solid var(--line);
+}
+
+.mfa-status > div {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.mfa-status-icon {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 42px;
+	height: 42px;
+	border-radius: 12px;
+	background: #eef1f5;
+	color: var(--muted);
+}
+
+.mfa-status.on {
+	background: var(--ok-soft);
+	border-color: #bfe5cf;
+}
+
+.mfa-status.on .mfa-status-icon {
+	background: #fff;
+	color: var(--ok);
+}
+
+.mfa-steps {
+	list-style: none;
+	counter-reset: step;
+	margin: 0;
+	padding: 0;
+}
+
+.mfa-steps > li {
+	counter-increment: step;
+	position: relative;
+	padding: 4px 0 26px 50px;
+}
+
+.mfa-steps > li::before {
+	content: counter(step);
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.mfa-steps > li:last-child {
+	padding-bottom: 4px;
+}
+
+.mfa-steps h3 {
+	margin: 4px 0 6px;
+	font-size: 1.02rem;
+}
+
+.qr-row {
+	display: flex;
+	align-items: center;
+	gap: 22px;
+	flex-wrap: wrap;
+	margin-top: 10px;
+}
+
+.qr {
+	width: 200px;
+	height: 200px;
+	flex: none;
+	padding: 6px;
+	border-radius: 14px;
+	border: 1px solid var(--line);
+	background: #fff;
+}
+
+.qr svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.qr-row > div:last-child {
+	flex: 1;
+	min-width: 220px;
+}
+
+code.secret {
+	display: inline-block;
+	margin-top: 4px;
+	padding: 10px 12px;
+	border-radius: var(--radius-sm);
+	background: #f3f5f8;
+	font-size: 0.95rem;
+	letter-spacing: 0.06em;
+	word-break: break-all;
+	user-select: all;
+}
+
+.inline-form {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-top: 10px;
+}
+
+input.otp-input {
+	max-width: 220px;
+	font-size: 1.25rem;
+	letter-spacing: 0.2em;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.auth-card input.otp-input {
+	max-width: none;
+}
+
+.recovery-codes {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px 24px;
+	margin: 16px 0 20px;
+	padding: 18px 18px 18px 42px;
+	border-radius: var(--radius);
+	background: #f6f8fb;
+	border: 1px dashed #c9d3e0;
+}
+
+.recovery-codes code {
+	font-size: 1.02rem;
+	letter-spacing: 0.04em;
+}
+
+.recovery-help {
+	margin-top: 18px;
+	font-size: 0.9rem;
+}
+
+.recovery-help summary {
+	cursor: pointer;
+	color: var(--accent);
+	font-weight: 500;
+	text-align: center;
+}
+
+.recovery-help .hint {
+	text-align: left;
+}
+
+.warn-text {
+	color: var(--danger);
+}
+
+.notice {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: -6px 0 22px;
+	padding: 14px 18px;
+	border-radius: var(--radius);
+	background: #fff6e8;
+	border: 1px solid #f4d9a8;
+	color: #7a4a0c;
+	text-decoration: none !important;
+}
+
+.notice > span {
+	flex: 1;
+}
+
+.notice:hover {
+	background: #fff0d6;
+}
+
+@media (max-width: 860px) {
+	.recovery-codes {
+		grid-template-columns: 1fr;
+	}
+
+	.qr {
+		width: 180px;
+		height: 180px;
+	}
+}
