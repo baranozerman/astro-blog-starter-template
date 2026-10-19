@@ -170,7 +170,7 @@ const portalUrl = `${Astro.url.origin}/portal`;
 					<span class="hint">{t("admin.reset_hint")}</span>
 				</label>
 				<div class="dialog-actions spread">
-					<button type="button" class="btn secondary" id="copy-creds" data-done={t("admin.copied")}>
+					<button type="button" class="btn secondary" id="copy-creds" data-done={t("admin.copied")} data-email={user.email}>
 						<Icon name="file" size={16} /> <span>{t("admin.copy_credentials")}</span>
 					</button>
 					<button type="submit" class="btn">{t("admin.reset_submit")}</button>
@@ -229,7 +229,8 @@ const portalUrl = `${Astro.url.origin}/portal`;
 	}
 </Portal>
 
-<script define:vars={{ credentialsTemplate, portalUrl, email: user.email }}>
+<!-- The email is read from a data attribute: user input must not be inlined into a script. -->
+<script define:vars={{ credentialsTemplate, portalUrl }}>
 	const pw = document.getElementById("pw");
 	document.getElementById("pw-gen").addEventListener("click", () => {
 		const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -237,7 +238,7 @@ const portalUrl = `${Astro.url.origin}/portal`;
 	});
 	const copy = document.getElementById("copy-creds");
 	copy.addEventListener("click", async () => {
-		const text = credentialsTemplate.replace("{url}", portalUrl).replace("{email}", email).replace("{password}", pw.value);
+		const text = credentialsTemplate.replace("{url}", portalUrl).replace("{email}", copy.dataset.email).replace("{password}", pw.value);
 		await navigator.clipboard.writeText(text);
 		const label = copy.querySelector("span");
 		const before = label.textContent;

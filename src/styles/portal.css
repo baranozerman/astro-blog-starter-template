@@ -44,7 +44,7 @@ body {
 	min-height: 100vh;
 	background: var(--navy);
 	color: var(--text);
-	font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	font-family: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	font-size: 15px;
 	line-height: 1.5;
 	-webkit-font-smoothing: antialiased;
@@ -2014,4 +2014,77 @@ a.access-name:hover {
 	.head-actions .btn {
 		flex: 1;
 	}
+}
+
+/* Privacy notice */
+.auth-card.wide {
+	grid-column: 1 / -1;
+	justify-self: center;
+	width: 100%;
+	max-width: 820px;
+	margin-bottom: 24px;
+}
+
+.privacy-link {
+	margin-top: 6px !important;
+	font-size: 0.85rem;
+}
+
+.mt {
+	margin-top: 28px;
+}
+
+.legal-back {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-bottom: 18px;
+	font-size: 0.9rem;
+	font-weight: 500;
+}
+
+.legal-back .flip {
+	transform: rotate(180deg);
+}
+
+.legal-icon {
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	margin-bottom: 14px;
+	border-radius: 12px;
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.legal section {
+	padding: 18px 0;
+	border-top: 1px solid var(--line);
+}
+
+.legal h3 {
+	margin: 0 0 8px;
+	font-size: 1.02rem;
+	font-weight: 650;
+}
+
+.legal p,
+.legal li {
+	color: var(--text);
+	line-height: 1.6;
+	font-size: 0.95rem;
+}
+
+.legal p {
+	margin: 0 0 8px;
+}
+
+.legal ul {
+	margin: 0;
+	padding-left: 20px;
+}
+
+.legal li + li {
+	margin-top: 6px;
 }

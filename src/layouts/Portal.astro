@@ -1,4 +1,6 @@
 ---
+// Self-hosted so no visitor data (IP address) goes to a third-party font service.
+import "@fontsource-variable/inter";
 import "../styles/portal.css";
 import Icon from "../components/portal/Icon.astro";
 import Logo from "../components/portal/Logo.astro";
@@ -13,9 +15,11 @@ interface Props {
 	error?: string;
 	/** Login/setup layout: a single floating card over the backdrop, no navigation. */
 	bare?: boolean;
+	/** Bare layout with a wider card for long text (e.g. the privacy notice). */
+	wide?: boolean;
 }
 
-const { title, error, bare = false } = Astro.props;
+const { title, error, bare = false, wide = false } = Astro.props;
 const { user, lang, t } = Astro.locals;
 const path = Astro.url.pathname;
 const flash = (code: string | null) => {
@@ -52,9 +56,6 @@ const initials = (user?.name ?? "")
 		<meta name="theme-color" content="#0b1424" />
 		<link rel="icon" type="image/svg+xml" href="/portal-icon.svg" />
 		<link rel="apple-touch-icon" href="/portal-icon.svg" />
-		<link rel="preconnect" href="https://fonts.googleapis.com" />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 		<link rel="preload" as="image" href={`/backgrounds/${backdrop.file}-1200.jpg`} media="(max-width: 860px)" />
 		<link rel="preload" as="image" href={`/backgrounds/${backdrop.file}.jpg`} media="(min-width: 861px)" />
 		<title>{title} · Prodinox</title>
@@ -83,14 +84,14 @@ const initials = (user?.name ?? "")
 							<LangSwitch />
 						</div>
 					</div>
-					<main class="auth-card">
+					<main class:list={["auth-card", { wide }]}>
 						{ok && <p class="flash ok"><Icon name="check" />{ok}</p>}
 						{err && <p class="flash err"><Icon name="alert" />{err}</p>}
 						<slot />
 					</main>
-					<p class="slogan">
+					{!wide && <p class="slogan">
 						<span>{t("app.slogan_a")}</span> {t("app.slogan_b")} <br /><span>{t("app.slogan_c")}</span> {t("app.slogan_d")}
-					</p>
+					</p>}
 				</div>
 			) : (
 				<>

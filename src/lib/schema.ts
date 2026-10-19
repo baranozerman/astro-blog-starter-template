@@ -15,6 +15,13 @@ async function hasColumn(db: D1Database, table: string, column: string) {
 }
 
 async function upgrade(db: D1Database) {
+	// Failed sign-ins per client (hashed IP), for throttling password guessing
+	// spread across many accounts.
+	await db.batch([
+		db.prepare("CREATE TABLE IF NOT EXISTS login_failures (client TEXT NOT NULL, at INTEGER NOT NULL)"),
+		db.prepare("CREATE INDEX IF NOT EXISTS idx_login_failures ON login_failures(client, at)"),
+	]);
+
 	// Nested folders: a folder may live inside another one. Permissions are
 	// granted on top-level folders and inherited by everything below them.
 	if (!(await hasColumn(db, "folders", "parent_id"))) {

@@ -1,0 +1,37 @@
+---
+import Portal from "../../layouts/Portal.astro";
+import Icon from "../../components/portal/Icon.astro";
+import { PRIVACY, PRIVACY_UPDATED } from "../../lib/privacy";
+import { LOCALES } from "../../lib/i18n";
+
+export const prerender = false;
+
+const { user, lang, t } = Astro.locals;
+const doc = PRIVACY[lang];
+const updated = new Date(`${PRIVACY_UPDATED}T12:00:00Z`).toLocaleDateString(LOCALES[lang], { dateStyle: "long" });
+---
+
+<Portal title={doc.title} bare wide>
+	<article class="legal">
+		<a class="legal-back" href="/portal"><Icon name="chevron" size={14} class="flip" /> {user ? t("privacy.back_portal") : t("privacy.back_login")}</a>
+		<span class="legal-icon"><Icon name="shield" size={22} /></span>
+		<h2>{doc.title}</h2>
+		<p class="lead">{doc.lead}</p>
+		{
+			doc.sections.map((s) => (
+				<section>
+					<h3>{s.h}</h3>
+					{s.p?.map((p) => <p>{p}</p>)}
+					{s.list && (
+						<ul>
+							{s.list.map((li) => (
+								<li>{li}</li>
+							))}
+						</ul>
+					)}
+				</section>
+			))
+		}
+		<p class="hint">{doc.updated}: {updated}</p>
+	</article>
+</Portal>
