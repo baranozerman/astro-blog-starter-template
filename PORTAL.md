@@ -110,6 +110,7 @@ Kaydettikten sonra portala bir test dosyası yükleyin; NAS'ta `portal/<klasör 
 Portalda yerleşik olanlar:
 
 - Şifreler PBKDF2 (100.000 tur, tuzlu) ile saklanır; oturum çerezleri `HttpOnly`, `Secure`, `SameSite=Lax`, veritabanında yalnızca özetleri tutulur.
+- **İki adımlı doğrulama (2FA)**: Hesabım → İki adımlı doğrulama. Google/Microsoft Authenticator gibi uygulamalarla 6 haneli kod (TOTP); açarken 10 adet tek kullanımlık kurtarma kodu verilir. Telefonunu kaybeden kullanıcının 2FA'sı yönetici panelinde kullanıcı sayfasından sıfırlanabilir. 2FA'sı kapalı yöneticilere Yönetim sayfasında uyarı gösterilir.
 - 5 hatalı denemede hesap 15 dk kilitlenir; aynı IP'den 15 dk içinde 20 hatalı denemeden sonra giriş geçici olarak durdurulur (IP'nin yalnızca özeti, 15 dk tutulur).
 - Klasör bazlı yetki her sayfada ve her indirmede sunucuda kontrol edilir; dosyalar herkese açık bağlantıyla paylaşılmaz.
 - Form gönderimlerinde CSRF koruması (`checkOrigin`).

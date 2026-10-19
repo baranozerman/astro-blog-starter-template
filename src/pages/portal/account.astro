@@ -4,6 +4,7 @@ import Icon from "../../components/portal/Icon.astro";
 import {
 	SESSION_COOKIE,
 	destroyUserSessions,
+	hasTotp,
 	hashPassword,
 	passwordProblem,
 	verifyPassword,
@@ -16,6 +17,7 @@ export const prerender = false;
 const { DB } = Astro.locals.runtime.env;
 const user = Astro.locals.user!;
 const { t } = Astro.locals;
+const mfaOn = await hasTotp(DB, user.id);
 
 let error = "";
 if (Astro.request.method === "POST") {
@@ -73,7 +75,18 @@ if (Astro.request.method === "POST") {
 			</form>
 		</div>
 		<div class="panel">
-			<h2>{t("account.language")}</h2>
+			<h2>{t("mfa.title")}</h2>
+			<div class:list={["mfa-status", { on: mfaOn }]}>
+				<span class="mfa-status-icon"><Icon name="shield" size={22} /></span>
+				<div>
+					<strong>{mfaOn ? t("mfa.on") : t("mfa.off")}</strong>
+					<span class="muted">{mfaOn ? t("mfa.on_body") : t("mfa.off_body")}</span>
+				</div>
+			</div>
+			<a class:list={["btn", { secondary: mfaOn }]} href="/portal/account/2fa">
+				<Icon name="shield" size={16} /> {mfaOn ? t("mfa.manage") : t("mfa.enable")}
+			</a>
+			<h2 class="mt">{t("account.language")}</h2>
 			<LangSwitch />
 			<h2 class="mt">{t("privacy.title")}</h2>
 			<p class="muted">{t("privacy.summary")}</p>

@@ -3,7 +3,7 @@ import Portal from "../../../../layouts/Portal.astro";
 import Icon from "../../../../components/portal/Icon.astro";
 import AdminTabs from "../../../../components/portal/AdminTabs.astro";
 import AccessSelect from "../../../../components/portal/AccessSelect.astro";
-import { destroyUserSessions, hashPassword, passwordProblem } from "../../../../lib/auth";
+import { clearTotp, destroyUserSessions, hashPassword, passwordProblem } from "../../../../lib/auth";
 import { audit, formatDate, formatRelative, parseId } from "../../../../lib/portal";
 import { listRoots, permissionMap, randomPassword, readAccessForm, saveAccess, type UserRow } from "../../../../lib/admin";
 import { rawMessage } from "../../../../lib/i18n";
@@ -73,6 +73,13 @@ if (Astro.request.method === "POST") {
 		return Astro.redirect(`${here}?ok=access`);
 	}
 
+	if (action === "reset_2fa") {
+		// For a customer who lost their phone; they can sign in with the password and set it up again.
+		await DB.batch([...clearTotp(DB, user.id), audit(DB, admin.id, "2fa_reset", user.email)]);
+		if (!isSelf) await destroyUserSessions(DB, user.id);
+		return Astro.redirect(`${here}?ok=mfa_reset`);
+	}
+
 	if (action === "delete") {
 		if (isSelf) return Astro.redirect(`${here}?err=self`);
 		await DB.batch([
@@ -118,6 +125,11 @@ const portalUrl = `${Astro.url.origin}/portal`;
 				{user.role === "admin" ? <span class="badge">{t("common.admin")}</span> : <span class="badge gray">{t("common.customer")}</span>}
 				{user.active ? <span class="badge green">{t("admin.active")}</span> : <span class="badge red">{t("common.inactive")}</span>}
 				{locked && <span class="badge red">{t("common.locked")}</span>}
+				{user.totp_enabled ? (
+					<span class="badge green"><Icon name="shield" size={12} /> {t("mfa.badge_on")}</span>
+				) : (
+					<span class="badge gray">{t("mfa.badge_off")}</span>
+				)}
 			</div>
 		</div>
 		<dl class="kv">
@@ -219,6 +231,13 @@ const portalUrl = `${Astro.url.origin}/portal`;
 		!isSelf && (
 			<div class="panel danger-zone">
 				<h2>{t("admin.danger")}</h2>
+				{user.totp_enabled === 1 && (
+					<form method="post" data-confirm={t("mfa.reset_confirm")} class="danger-row">
+						<input type="hidden" name="action" value="reset_2fa" />
+						<p class="hint">{t("mfa.reset_hint")}</p>
+						<button type="submit" class="btn secondary"><Icon name="shield" size={16} /> {t("mfa.reset")}</button>
+					</form>
+				)}
 				<form method="post" data-confirm={t("admin.delete_user_confirm")} class="danger-row">
 					<input type="hidden" name="action" value="delete" />
 					<p class="hint">{t("admin.delete_user_hint")}</p>

@@ -3,7 +3,7 @@ import { SESSION_COOKIE, getSessionUser } from "./lib/auth";
 import { LANG_COOKIE, detectLang, translator } from "./lib/i18n";
 import { ensureSchema } from "./lib/schema";
 
-const PUBLIC_PATHS = new Set(["/portal/login", "/portal/setup", "/portal/lang", "/portal/privacy"]);
+const PUBLIC_PATHS = new Set(["/portal/login", "/portal/login/verify", "/portal/setup", "/portal/lang", "/portal/privacy"]);
 
 // Everything the portal loads comes from this origin. Inline scripts/styles are
 // Astro's own (define:vars, style attributes); nothing third-party is allowed.

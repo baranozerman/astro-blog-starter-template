@@ -27,12 +27,13 @@ export interface UserRow {
 	created_at: number;
 	last_login: number | null;
 	folder_count: number;
+	totp_enabled: number;
 }
 
 export async function listUsers(db: D1Database) {
 	const { results } = await db
 		.prepare(
-			`SELECT u.id, u.email, u.name, u.company, u.role, u.active, u.locked_until, u.created_at,
+			`SELECT u.id, u.email, u.name, u.company, u.role, u.active, u.locked_until, u.created_at, u.totp_enabled,
 			        (SELECT MAX(created_at) FROM audit_log a WHERE a.user_id = u.id AND a.action = 'login') AS last_login,
 			        (SELECT COUNT(*) FROM permissions p JOIN folders f ON f.id = p.folder_id
 			         WHERE p.user_id = u.id AND f.parent_id IS NULL AND (p.can_read = 1 OR p.can_upload = 1)) AS folder_count

@@ -4,6 +4,7 @@ import Icon from "../../../components/portal/Icon.astro";
 import AdminTabs from "../../../components/portal/AdminTabs.astro";
 import { formatBytes, formatDate } from "../../../lib/portal";
 import { isMessageKey } from "../../../lib/i18n";
+import { hasTotp } from "../../../lib/auth";
 
 export const prerender = false;
 
@@ -24,6 +25,7 @@ const [counts, activity] = await DB.batch<any>([
 	),
 ]);
 const c = counts.results[0];
+const needs2fa = !(await hasTotp(DB, Astro.locals.user!.id));
 const stats = [
 	{ icon: "users" as const, value: c.customers, label: t("admin.stat_customers"), href: "/portal/admin/users" },
 	{ icon: "folder" as const, value: c.roots, label: t("admin.stat_folders"), href: "/portal/admin/folders" },
@@ -48,6 +50,10 @@ const actionIcon: Record<string, "upload" | "download" | "trash" | "user" | "fol
 	permissions: "shield",
 	rename: "pencil",
 	move: "move",
+	"2fa_enable": "shield",
+	"2fa_disable": "shield",
+	"2fa_reset": "shield",
+	"2fa_codes": "shield",
 };
 ---
 
@@ -64,6 +70,18 @@ const actionIcon: Record<string, "upload" | "download" | "trash" | "user" | "fol
 	</div>
 
 	<AdminTabs />
+
+	{
+		needs2fa && (
+			<a class="notice" href="/portal/account/2fa">
+				<Icon name="shield" size={20} />
+				<span>
+					<strong>{t("mfa.nudge_title")}</strong> {t("mfa.nudge_body")}
+				</span>
+				<Icon name="chevron" size={18} />
+			</a>
+		)
+	}
 
 	<div class="stats">
 		{

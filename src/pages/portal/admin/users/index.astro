@@ -100,6 +100,7 @@ const portalUrl = `${Astro.url.origin}/portal`;
 								) : (
 									<span class="badge gray">{t("admin.access_n", { n: u.folder_count })}</span>
 								)}
+								{u.totp_enabled === 1 && <span class="badge green" title={t("mfa.badge_on")}><Icon name="shield" size={12} /> 2FA</span>}
 								{!u.active && <span class="badge red">{t("common.inactive")}</span>}
 								{u.locked_until && u.locked_until > now && <span class="badge red">{t("common.locked")}</span>}
 							</span>

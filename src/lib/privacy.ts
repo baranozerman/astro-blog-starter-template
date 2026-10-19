@@ -28,7 +28,7 @@ export const PRIVACY: Record<Lang, { title: string; lead: string; updated: strin
 				h: "İşlenen veriler",
 				list: [
 					"Hesap bilgileri: ad soyad, firma, e-posta adresi ve kullanıcı rolü.",
-					"Şifre: yalnızca geri döndürülemez özeti (PBKDF2) saklanır; şifrenizi biz de göremeyiz.",
+					"Şifre: yalnızca geri döndürülemez özeti (PBKDF2) saklanır; şifrenizi biz de göremeyiz. İki adımlı doğrulama açıksa doğrulama anahtarı ve kurtarma kodlarının özetleri saklanır.",
 					"İşlem kayıtları: giriş, dosya yükleme, indirme, taşıma, silme ve izin değişikliklerinin kim tarafından ve ne zaman yapıldığı.",
 					"Yüklenen dosyalar ve dosya adları. Dosyaların içeriğindeki kişisel veriler yükleyenin sorumluluğundadır.",
 					"Güvenlik: hatalı giriş denemelerini sınırlamak için IP adresinizin geri döndürülemez özeti en fazla 15 dakika tutulur.",
@@ -61,6 +61,7 @@ export const PRIVACY: Record<Lang, { title: string; lead: string; updated: strin
 					"Cloudflare depolamasındaki dosyalar beklemede şifrelenmiş olarak tutulur.",
 					"Her müşteri yalnızca kendisine yetki verilen klasörleri görebilir; yetkiler klasör bazında ayrı ayrı tanımlanır (görüntüleme / yükleme).",
 					"Dosyalar herkese açık bir bağlantıyla paylaşılmaz; her indirme oturum ve yetki kontrolünden geçer ve kayda alınır.",
+					"İsteyen kullanıcılar hesaplarını iki adımlı doğrulama (telefondaki doğrulama uygulaması) ile ek olarak koruyabilir.",
 					"Art arda hatalı girişte hesap geçici olarak kilitlenir; aynı adresten çok sayıda deneme ayrıca sınırlandırılır.",
 					"Oturumlar 7 gün sonra kendiliğinden sona erer; şifre değiştirildiğinde diğer cihazlardaki oturumlar kapatılır.",
 					"Portal sayfaları tarayıcıda veya ara sunucularda önbelleğe alınmaz, başka sitelerin içine gömülemez.",
@@ -106,7 +107,7 @@ export const PRIVACY: Record<Lang, { title: string; lead: string; updated: strin
 				h: "Data we process",
 				list: [
 					"Account details: full name, company, email address and user role.",
-					"Password: only an irreversible hash (PBKDF2) is stored; nobody at Prodinox can see your password.",
+					"Password: only an irreversible hash (PBKDF2) is stored; nobody at Prodinox can see your password. With two-step verification on, the authenticator key and hashes of your recovery codes are stored.",
 					"Activity log: who signed in, uploaded, downloaded, moved or deleted files or changed permissions, and when.",
 					"Uploaded files and file names. Personal data inside files is the responsibility of the uploader.",
 					"Security: an irreversible hash of your IP address is kept for up to 15 minutes to limit failed sign-in attempts.",
@@ -139,6 +140,7 @@ export const PRIVACY: Record<Lang, { title: string; lead: string; updated: strin
 					"Files in Cloudflare storage are encrypted at rest.",
 					"Each customer only sees the folders they have been granted; permissions are set per folder (view / upload).",
 					"Files are never shared through public links; every download is checked against your session and permissions, and logged.",
+					"Users can additionally protect their account with two-step verification (an authenticator app on their phone).",
 					"Repeated failed sign-ins temporarily lock the account; many attempts from the same address are throttled as well.",
 					"Sessions expire after 7 days; changing your password signs out your other devices.",
 					"Portal pages are never cached by browsers or proxies and cannot be embedded in other sites.",
