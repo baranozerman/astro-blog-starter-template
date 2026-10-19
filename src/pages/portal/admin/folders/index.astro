@@ -1,0 +1,125 @@
+---
+import Portal from "../../../../layouts/Portal.astro";
+import Icon from "../../../../components/portal/Icon.astro";
+import AdminTabs from "../../../../components/portal/AdminTabs.astro";
+import AccessSelect from "../../../../components/portal/AccessSelect.astro";
+import { audit, formatBytes } from "../../../../lib/portal";
+import { listRoots, listUsers, parseLevel, saveAccess } from "../../../../lib/admin";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const admin = Astro.locals.user!;
+const { lang, t } = Astro.locals;
+
+if (Astro.request.method === "POST") {
+	const form = await Astro.request.formData();
+	const name = String(form.get("name") ?? "").trim();
+	const description = String(form.get("description") ?? "").trim();
+	if (!name) return Astro.redirect("/portal/admin/folders?err=invalid");
+	const { meta } = await DB.prepare("INSERT INTO folders (name, description, created_by) VALUES (?, ?, ?)")
+		.bind(name, description, admin.id)
+		.run();
+	const folderId = Number(meta.last_row_id);
+	await audit(DB, admin.id, "folder_create", name).run();
+	// Customer access chosen in the same dialog.
+	const customers = new Set((await listUsers(DB)).filter((u) => u.role === "customer").map((u) => u.id));
+	const changes = [...form.entries()]
+		.map(([k, v]) => ({ m: /^init:(\d+)$/.exec(k), level: parseLevel(v) }))
+		.filter((x) => x.m && x.level && x.level !== "none" && customers.has(Number(x.m[1])))
+		.map((x) => ({ userId: Number(x.m![1]), folderId, level: x.level! }));
+	await saveAccess(DB, admin.id, changes);
+	return Astro.redirect(`/portal/admin/folders/${folderId}?ok=created`);
+}
+
+const [roots, users] = await Promise.all([listRoots(DB), listUsers(DB)]);
+const customers = users.filter((u) => u.role === "customer");
+---
+
+<Portal title={t("admin.tab_folders")}>
+	<div class="page-head">
+		<div>
+			<h1>{t("admin.tab_folders")}</h1>
+			<p class="muted">{t("admin.folders_lead")}</p>
+		</div>
+		<div class="head-actions">
+			<button type="button" class="btn" data-open-dialog="dlg-folder"><Icon name="folderPlus" /> {t("admin.new_root")}</button>
+		</div>
+	</div>
+
+	<AdminTabs />
+
+	<div class="panel">
+		<div class="panel-head">
+			<h2>{t("admin.folders_n", { n: roots.length })}</h2>
+			<div class="search">
+				<Icon name="search" size={16} />
+				<input type="search" data-filter="#folder-list" placeholder={t("admin.search_folders")} aria-label={t("admin.search_folders")} />
+			</div>
+		</div>
+		{
+			roots.length === 0 ? (
+				<p class="empty">{t("admin.no_root_folders")}</p>
+			) : (
+				<div class="rows" id="folder-list">
+					{roots.map((f) => (
+						<a class="row" href={`/portal/admin/folders/${f.id}`} data-search={`${f.name} ${f.description}`.toLocaleLowerCase(lang)}>
+							<span class="file-type folder"><Icon name="folder" size={20} /></span>
+							<span class="row-main">
+								<strong>{f.name}</strong>
+								<span class="muted">{f.description || " "}</span>
+							</span>
+							<span class="row-col muted hide-sm">
+								{t("common.files_n", { n: f.file_count })}
+								{f.sub_count > 0 && ` · ${t("common.subfolders_n", { n: f.sub_count })}`}
+							</span>
+							<span class="row-col muted hide-sm">{formatBytes(f.bytes, lang)}</span>
+							<span class="row-col">
+								<span class:list={["badge", f.user_count ? "green" : "gray"]}>
+									<Icon name="users" size={13} /> {t("admin.users_with_access", { n: f.user_count })}
+								</span>
+							</span>
+							<Icon name="chevron" size={18} class="row-arrow" />
+						</a>
+					))}
+					<p class="empty" data-no-match hidden>{t("admin.no_match")}</p>
+				</div>
+			)
+		}
+	</div>
+
+	<dialog id="dlg-folder" class="dialog wide" data-open-on-hash="new">
+		<form method="post" class="stack">
+			<div class="dialog-head">
+				<h2>{t("admin.new_root")}</h2>
+				<button type="button" class="icon-btn dark" data-close aria-label={t("common.cancel")}><Icon name="x" /></button>
+			</div>
+			<p class="hint">{t("admin.new_root_hint")}</p>
+			<label>{t("common.folder_name")} <input type="text" name="name" required placeholder={t("admin.folder_placeholder")} /></label>
+			<label>{t("common.description")} <textarea name="description" rows="2"></textarea></label>
+			{
+				customers.length > 0 && (
+					<fieldset class="access-fieldset">
+						<legend>{t("admin.customer_access")}</legend>
+						<p class="hint">{t("admin.initial_access_hint")}</p>
+						<div class="access-list">
+							{customers.map((u) => (
+								<div class="access-item">
+									<span class="access-name">
+										<strong>{u.name}</strong>
+										<span class="muted small">{u.company || u.email}</span>
+									</span>
+									<AccessSelect name={`init:${u.id}`} value="none" label={u.name} />
+								</div>
+							))}
+						</div>
+					</fieldset>
+				)
+			}
+			<div class="dialog-actions">
+				<button type="button" class="btn secondary" data-close>{t("common.cancel")}</button>
+				<button type="submit" class="btn">{t("admin.create_folder")}</button>
+			</div>
+		</form>
+	</dialog>
+</Portal>

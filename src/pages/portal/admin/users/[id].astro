@@ -1,22 +1,28 @@
 ---
 import Portal from "../../../../layouts/Portal.astro";
-import { destroyUserSessions, hashPassword, passwordProblem, type SessionUser } from "../../../../lib/auth";
-import { audit, parseId } from "../../../../lib/portal";
+import Icon from "../../../../components/portal/Icon.astro";
+import AdminTabs from "../../../../components/portal/AdminTabs.astro";
+import AccessSelect from "../../../../components/portal/AccessSelect.astro";
+import { destroyUserSessions, hashPassword, passwordProblem } from "../../../../lib/auth";
+import { audit, formatDate, formatRelative, parseId } from "../../../../lib/portal";
+import { listRoots, permissionMap, randomPassword, readAccessForm, saveAccess, type UserRow } from "../../../../lib/admin";
+import { rawMessage } from "../../../../lib/i18n";
 
 export const prerender = false;
 
 const { DB } = Astro.locals.runtime.env;
 const admin = Astro.locals.user!;
-const { t } = Astro.locals;
+const { lang, t } = Astro.locals;
 const userId = parseId(Astro.params.id);
 const user = userId
 	? await DB.prepare(
-			"SELECT id, email, name, company, role, active, locked_until FROM users WHERE id = ?",
+			`SELECT u.*, (SELECT MAX(created_at) FROM audit_log a WHERE a.user_id = u.id AND a.action = 'login') AS last_login
+			 FROM users u WHERE u.id = ?`,
 		)
 			.bind(userId)
-			.first<SessionUser & { active: number; locked_until: number | null }>()
+			.first<UserRow>()
 	: null;
-if (!user) return Astro.redirect("/portal/admin");
+if (!user) return Astro.redirect("/portal/admin/users");
 const here = `/portal/admin/users/${user.id}`;
 const isSelf = user.id === admin.id;
 
@@ -33,9 +39,7 @@ if (Astro.request.method === "POST") {
 		const active = form.get("active") === "1" ? 1 : 0;
 		if (!name || !email) return Astro.redirect(`${here}?err=invalid`);
 		if (isSelf && (role !== "admin" || !active)) return Astro.redirect(`${here}?err=self`);
-		const clash = await DB.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?")
-			.bind(email, user.id)
-			.first();
+		const clash = await DB.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?").bind(email, user.id).first();
 		if (clash) return Astro.redirect(`${here}?err=exists`);
 		await DB.batch([
 			DB.prepare(
@@ -52,9 +56,10 @@ if (Astro.request.method === "POST") {
 		error = passwordProblem(password, t);
 		if (!error) {
 			await DB.batch([
-				DB.prepare(
-					"UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?",
-				).bind(await hashPassword(password), user.id),
+				DB.prepare("UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?").bind(
+					await hashPassword(password),
+					user.id,
+				),
 				audit(DB, admin.id, "password_reset", user.email),
 			]);
 			if (!isSelf) await destroyUserSessions(DB, user.id);
@@ -62,21 +67,10 @@ if (Astro.request.method === "POST") {
 		}
 	}
 
-	if (action === "permissions") {
-		const read = new Set(form.getAll("read").map(String));
-		const upload = new Set(form.getAll("upload").map(String));
-		const folderIds = [...new Set([...read, ...upload])].map(parseId).filter((n) => n !== null);
-		await DB.batch([
-			DB.prepare("DELETE FROM permissions WHERE user_id = ?").bind(user.id),
-			...folderIds.map((fid) =>
-				DB.prepare(
-					`INSERT INTO permissions (user_id, folder_id, can_read, can_upload)
-					 SELECT ?, id, ?, ? FROM folders WHERE id = ? AND parent_id IS NULL`,
-				).bind(user.id, read.has(String(fid)) ? 1 : 0, upload.has(String(fid)) ? 1 : 0, fid),
-			),
-			audit(DB, admin.id, "permissions", user.email),
-		]);
-		return Astro.redirect(`${here}?ok=saved`);
+	if (action === "access") {
+		const changes = (await readAccessForm(DB, form)).filter((c) => c.userId === user.id);
+		await saveAccess(DB, admin.id, changes);
+		return Astro.redirect(`${here}?ok=access`);
 	}
 
 	if (action === "delete") {
@@ -85,32 +79,59 @@ if (Astro.request.method === "POST") {
 			DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
 			audit(DB, admin.id, "user_delete", user.email),
 		]);
-		return Astro.redirect("/portal/admin?ok=deleted");
+		return Astro.redirect("/portal/admin/users?ok=deleted");
 	}
 }
 
-const { results: folders } = await DB.prepare(
-	`SELECT f.id, f.name, COALESCE(p.can_read, 0) AS can_read, COALESCE(p.can_upload, 0) AS can_upload
-	 FROM folders f LEFT JOIN permissions p ON p.folder_id = f.id AND p.user_id = ?
-	 WHERE f.parent_id IS NULL
-	 ORDER BY f.name COLLATE NOCASE`,
-)
-	.bind(user.id)
-	.all<{ id: number; name: string; can_read: number; can_upload: number }>();
+const [roots, perms] = await Promise.all([listRoots(DB), permissionMap(DB)]);
+const level = (folderId: number) => perms.get(`${user.id}:${folderId}`) ?? "none";
 const locked = user.locked_until !== null && user.locked_until > Math.floor(Date.now() / 1000);
+const initials = user.name
+	.split(/\s+/)
+	.filter(Boolean)
+	.slice(0, 2)
+	.map((w) => w[0]!.toLocaleUpperCase(lang))
+	.join("");
+const credentialsTemplate = rawMessage(lang, "admin.credentials_text");
+const portalUrl = `${Astro.url.origin}/portal`;
 ---
 
 <Portal title={user.name} error={error}>
 	<div class="page-head">
 		<div>
-			<div class="breadcrumb"><a href="/portal/admin">{t("admin.title")}</a> / {t("admin.users")} /</div>
-			<h1>
-				{user.name}
-				{!user.active && <span class="badge red">{t("common.inactive")}</span>}
-				{locked && <span class="badge red">{t("common.locked")}</span>}
-			</h1>
-			<p class="muted">{user.email}</p>
+			<nav class="breadcrumb">
+				<a href="/portal/admin/users"><Icon name="users" size={14} /> {t("admin.tab_users")}</a>
+				<Icon name="chevron" size={14} />
+			</nav>
+			<h1>{user.name}</h1>
 		</div>
+	</div>
+
+	<AdminTabs />
+
+	<div class="profile panel">
+		<span class="avatar big">{initials}</span>
+		<div class="profile-main">
+			<strong>{user.name}</strong>
+			<span class="muted">{user.email}{user.company && ` · ${user.company}`}</span>
+			<div class="badges">
+				{user.role === "admin" ? <span class="badge">{t("common.admin")}</span> : <span class="badge gray">{t("common.customer")}</span>}
+				{user.active ? <span class="badge green">{t("admin.active")}</span> : <span class="badge red">{t("common.inactive")}</span>}
+				{locked && <span class="badge red">{t("common.locked")}</span>}
+			</div>
+		</div>
+		<dl class="kv">
+			<div>
+				<dt>{t("admin.last_login")}</dt>
+				<dd title={user.last_login ? formatDate(user.last_login, lang) : undefined}>
+					{user.last_login ? formatRelative(user.last_login, lang, t) : t("admin.never")}
+				</dd>
+			</div>
+			<div>
+				<dt>{t("admin.member_since")}</dt>
+				<dd>{formatDate(user.created_at, lang)}</dd>
+			</div>
+		</dl>
 	</div>
 
 	<div class="grid-2">
@@ -138,56 +159,57 @@ const locked = user.locked_until !== null && user.locked_until > Math.floor(Date
 
 		<div class="panel">
 			<h2>{t("admin.reset_password")}</h2>
-			<form method="post" class="stack">
+			<form method="post" class="stack" id="pw-form">
 				<input type="hidden" name="action" value="password" />
 				<label>
 					{t("account.new")}
-					<input type="text" name="password" required minlength="10" autocomplete="off" />
+					<span class="input-row">
+						<input type="text" name="password" id="pw" value={randomPassword()} required minlength="10" autocomplete="off" spellcheck="false" />
+						<button type="button" class="btn secondary small" id="pw-gen"><Icon name="activity" size={14} /> {t("admin.generate")}</button>
+					</span>
 					<span class="hint">{t("admin.reset_hint")}</span>
 				</label>
-				<div><button type="submit" class="btn">{t("admin.reset_submit")}</button></div>
+				<div class="dialog-actions spread">
+					<button type="button" class="btn secondary" id="copy-creds" data-done={t("admin.copied")}>
+						<Icon name="file" size={16} /> <span>{t("admin.copy_credentials")}</span>
+					</button>
+					<button type="submit" class="btn">{t("admin.reset_submit")}</button>
+				</div>
 			</form>
 		</div>
 	</div>
 
 	<div class="panel">
-		<h2>{t("admin.permissions")}</h2>
+		<div class="panel-head">
+			<h2>{t("admin.permissions")}</h2>
+			{user.role === "customer" && roots.length > 0 && <a class="btn small secondary" href="/portal/admin/access"><Icon name="shield" size={14} /> {t("admin.access_title")}</a>}
+		</div>
 		{
 			user.role === "admin" ? (
 				<p class="muted">{t("admin.admins_all")}</p>
-			) : folders.length === 0 ? (
+			) : roots.length === 0 ? (
 				<p class="muted">
-					<a href="/portal/admin">{t("admin.create_folder_first")}</a>
+					<a href="/portal/admin/folders#new">{t("admin.create_folder_first")}</a>
 				</p>
 			) : (
-				<form method="post">
-					<input type="hidden" name="action" value="permissions" />
-					<div class="table-wrap">
-						<table>
-							<thead>
-								<tr>
-									<th>{t("admin.col_folder")}</th>
-									<th class="center">{t("common.view_download")}</th>
-									<th class="center">{t("common.upload")}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{folders.map((f) => (
-									<tr>
-										<td>{f.name}</td>
-										<td class="center">
-											<input type="checkbox" name="read" value={f.id} checked={f.can_read === 1} aria-label={`${f.name}: ${t("common.view_download")}`} />
-										</td>
-										<td class="center">
-											<input type="checkbox" name="upload" value={f.id} checked={f.can_upload === 1} aria-label={`${f.name}: ${t("common.upload")}`} />
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
+				<form method="post" data-access-form>
+					<input type="hidden" name="action" value="access" />
+					<p class="hint">{t("admin.folder_access_lead")}</p>
+					<div class="access-list">
+						{roots.map((r) => (
+							<div class="access-item">
+								<span class="file-type folder"><Icon name="folder" size={18} /></span>
+								<a class="access-name" href={`/portal/admin/folders/${r.id}`}>{r.name}</a>
+								<AccessSelect name={`access:${user.id}:${r.id}`} value={level(r.id)} label={r.name} />
+							</div>
+						))}
 					</div>
 					<p class="hint">{t("admin.upload_only_hint")}</p>
-					<button type="submit" class="btn">{t("admin.save_permissions")}</button>
+					<div class="save-bar" data-save-bar data-template={rawMessage(lang, "admin.access_changed")}>
+						<span data-count></span>
+						<button type="button" class="btn secondary small" data-reset>{t("admin.access_reset")}</button>
+						<button type="submit" class="btn">{t("admin.save_permissions")}</button>
+					</div>
 				</form>
 			)
 		}
@@ -196,13 +218,30 @@ const locked = user.locked_until !== null && user.locked_until > Math.floor(Date
 	{
 		!isSelf && (
 			<div class="panel danger-zone">
-				<h2>{t("admin.delete_user")}</h2>
-				<form method="post" data-confirm={t("admin.delete_user_confirm")}>
+				<h2>{t("admin.danger")}</h2>
+				<form method="post" data-confirm={t("admin.delete_user_confirm")} class="danger-row">
 					<input type="hidden" name="action" value="delete" />
 					<p class="hint">{t("admin.delete_user_hint")}</p>
-					<button type="submit" class="btn danger">{t("admin.delete_user")}</button>
+					<button type="submit" class="btn danger"><Icon name="trash" size={16} /> {t("admin.delete_user")}</button>
 				</form>
 			</div>
 		)
 	}
 </Portal>
+
+<script define:vars={{ credentialsTemplate, portalUrl, email: user.email }}>
+	const pw = document.getElementById("pw");
+	document.getElementById("pw-gen").addEventListener("click", () => {
+		const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+		pw.value = Array.from(crypto.getRandomValues(new Uint8Array(14)), (b) => alphabet[b % alphabet.length]).join("");
+	});
+	const copy = document.getElementById("copy-creds");
+	copy.addEventListener("click", async () => {
+		const text = credentialsTemplate.replace("{url}", portalUrl).replace("{email}", email).replace("{password}", pw.value);
+		await navigator.clipboard.writeText(text);
+		const label = copy.querySelector("span");
+		const before = label.textContent;
+		label.textContent = copy.dataset.done;
+		setTimeout(() => (label.textContent = before), 1800);
+	});
+</script>

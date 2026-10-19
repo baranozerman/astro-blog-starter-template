@@ -1,0 +1,102 @@
+---
+import Portal from "../../../layouts/Portal.astro";
+import Icon from "../../../components/portal/Icon.astro";
+import AdminTabs from "../../../components/portal/AdminTabs.astro";
+import AccessSelect from "../../../components/portal/AccessSelect.astro";
+import { listRoots, listUsers, permissionMap, readAccessForm, saveAccess } from "../../../lib/admin";
+import { rawMessage } from "../../../lib/i18n";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const admin = Astro.locals.user!;
+const { lang, t } = Astro.locals;
+
+if (Astro.request.method === "POST") {
+	const changes = await readAccessForm(DB, await Astro.request.formData());
+	await saveAccess(DB, admin.id, changes);
+	return Astro.redirect("/portal/admin/access?ok=access");
+}
+
+const [users, roots, perms] = await Promise.all([listUsers(DB), listRoots(DB), permissionMap(DB)]);
+const customers = users.filter((u) => u.role === "customer");
+const level = (userId: number, folderId: number) => perms.get(`${userId}:${folderId}`) ?? "none";
+---
+
+<Portal title={t("admin.access_title")}>
+	<div class="page-head">
+		<div>
+			<h1>{t("admin.access_title")}</h1>
+			<p class="muted">{t("admin.access_lead")}</p>
+		</div>
+	</div>
+
+	<AdminTabs />
+
+	{
+		customers.length === 0 || roots.length === 0 ? (
+			<div class="panel empty">
+				<Icon name="shield" size={36} />
+				<span>{t("admin.access_need")}</span>
+				<span class="head-actions">
+					<a class="btn secondary" href="/portal/admin/users#new"><Icon name="plus" /> {t("admin.new_user")}</a>
+					<a class="btn secondary" href="/portal/admin/folders#new"><Icon name="folderPlus" /> {t("admin.new_root")}</a>
+				</span>
+			</div>
+		) : (
+			<form method="post" class="panel matrix-panel" data-access-form>
+				<div class="panel-head">
+					<h2>
+						{t("admin.users_with_access", { n: customers.length })} × {t("admin.access_n", { n: roots.length })}
+					</h2>
+					<div class="search">
+						<Icon name="search" size={16} />
+						<input type="search" data-filter="#matrix-body" placeholder={t("admin.search_users")} aria-label={t("admin.search_users")} />
+					</div>
+				</div>
+				<div class="legend">
+					<span class="lvl" data-level="none">{t("admin.level_none")}</span>
+					<span class="lvl" data-level="read">{t("admin.level_read")}</span>
+					<span class="lvl" data-level="upload">{t("admin.level_upload")}</span>
+					<span class="lvl" data-level="both">{t("admin.level_both")}</span>
+				</div>
+				<div class="matrix-wrap">
+					<table class="matrix">
+						<thead>
+							<tr>
+								<th class="sticky-col">{t("admin.col_user")}</th>
+								{roots.map((r) => (
+									<th>
+										<a href={`/portal/admin/folders/${r.id}`} title={r.description}>{r.name}</a>
+									</th>
+								))}
+							</tr>
+						</thead>
+						<tbody id="matrix-body">
+							{customers.map((u) => (
+								<tr data-search={`${u.name} ${u.company} ${u.email}`.toLocaleLowerCase(lang)}>
+									<th class="sticky-col" scope="row">
+										<a href={`/portal/admin/users/${u.id}`}>{u.name}</a>
+										<span class="muted small">{u.company || u.email}</span>
+										{!u.active && <span class="badge red">{t("common.inactive")}</span>}
+									</th>
+									{roots.map((r) => (
+										<td>
+											<AccessSelect name={`access:${u.id}:${r.id}`} value={level(u.id, r.id)} label={`${u.name} · ${r.name}`} />
+										</td>
+									))}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+				<p class="empty" data-no-match hidden>{t("admin.no_match")}</p>
+				<div class="save-bar" data-save-bar data-template={rawMessage(lang, "admin.access_changed")}>
+					<span data-count></span>
+					<button type="button" class="btn secondary small" data-reset>{t("admin.access_reset")}</button>
+					<button type="submit" class="btn">{t("admin.access_save")}</button>
+				</div>
+			</form>
+		)
+	}
+</Portal>
