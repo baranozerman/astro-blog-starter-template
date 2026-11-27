@@ -3,7 +3,7 @@ import Portal from "../../../../layouts/Portal.astro";
 import Icon from "../../../../components/portal/Icon.astro";
 import AdminTabs from "../../../../components/portal/AdminTabs.astro";
 import AccessSelect from "../../../../components/portal/AccessSelect.astro";
-import { audit, formatBytes } from "../../../../lib/portal";
+import { audit, cleanProjectCode, formatBytes, isUniqueViolation } from "../../../../lib/portal";
 import { listRoots, listUsers, parseLevel, saveAccess } from "../../../../lib/admin";
 
 export const prerender = false;
@@ -16,10 +16,17 @@ if (Astro.request.method === "POST") {
 	const form = await Astro.request.formData();
 	const name = String(form.get("name") ?? "").trim();
 	const description = String(form.get("description") ?? "").trim();
-	if (!name) return Astro.redirect("/portal/admin/folders?err=invalid");
-	const { meta } = await DB.prepare("INSERT INTO folders (name, description, created_by) VALUES (?, ?, ?)")
-		.bind(name, description, admin.id)
-		.run();
+	const projectCode = cleanProjectCode(form.get("project_code"));
+	if (!name || (String(form.get("project_code") ?? "").trim() && !projectCode)) return Astro.redirect("/portal/admin/folders?err=invalid");
+	let meta;
+	try {
+		({ meta } = await DB.prepare("INSERT INTO folders (name, description, created_by, project_code) VALUES (?, ?, ?, ?)")
+			.bind(name, description, admin.id, projectCode)
+			.run());
+	} catch (e) {
+		if (isUniqueViolation(e)) return Astro.redirect("/portal/admin/folders?err=project_code_taken");
+		throw e;
+	}
 	const folderId = Number(meta.last_row_id);
 	await audit(DB, admin.id, "folder_create", name).run();
 	// Customer access chosen in the same dialog.
@@ -63,7 +70,7 @@ const customers = users.filter((u) => u.role === "customer");
 			) : (
 				<div class="rows" id="folder-list">
 					{roots.map((f) => (
-						<a class="row" href={`/portal/admin/folders/${f.id}`} data-search={`${f.name} ${f.description}`.toLocaleLowerCase(lang)}>
+						<a class="row" href={`/portal/admin/folders/${f.id}`} data-search={`${f.name} ${f.description} ${f.project_code ?? ""}`.toLocaleLowerCase(lang)}>
 							<span class="file-type folder"><Icon name="folder" size={20} /></span>
 							<span class="row-main">
 								<strong>{f.name}</strong>
@@ -97,6 +104,7 @@ const customers = users.filter((u) => u.role === "customer");
 			<p class="hint">{t("admin.new_root_hint")}</p>
 			<label>{t("common.folder_name")} <input type="text" name="name" required placeholder={t("admin.folder_placeholder")} /></label>
 			<label>{t("common.description")} <textarea name="description" rows="2"></textarea></label>
+			<label>{t("admin.project_code")} <input type="text" name="project_code" maxlength="50" autocomplete="off" spellcheck="false" /></label>
 			{
 				customers.length > 0 && (
 					<fieldset class="access-fieldset">

@@ -24,6 +24,7 @@ export interface Folder {
 	description: string;
 	parent_id: number | null;
 	created_by: number | null;
+	project_code: string | null;
 }
 
 export interface FolderAccess {
@@ -44,6 +45,33 @@ export interface FileRow {
 	content_type: string;
 	uploaded_by: number | null;
 	created_at: number;
+}
+
+/** Project code as typed on a folder or in a /p/<code> link: trimmed, at most 50 characters, empty = none. */
+export function cleanProjectCode(value: unknown) {
+	// eslint-disable-next-line no-control-regex
+	const code = String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+	return code && code.length <= 50 ? code : null;
+}
+
+/** Top-level folder linked to a project code (case-insensitive). */
+export function folderByProjectCode(db: D1Database, code: string) {
+	return db
+		.prepare("SELECT * FROM folders WHERE parent_id IS NULL AND project_code = ? COLLATE NOCASE")
+		.bind(code)
+		.first<Folder>();
+}
+
+/**
+ * Path for a project code, encoded segment by segment: "/" stays a separator
+ * because the Cloudflare adapter rejects an encoded slash (%2F) in the URL.
+ */
+export function projectCodePath(code: string) {
+	return code.split("/").map(encodeURIComponent).join("/");
+}
+
+export function isUniqueViolation(e: unknown) {
+	return /UNIQUE constraint failed/i.test(String(e));
 }
 
 export function parseId(value: string | undefined | null) {

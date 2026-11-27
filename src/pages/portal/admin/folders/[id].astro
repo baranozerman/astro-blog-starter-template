@@ -3,7 +3,7 @@ import Portal from "../../../../layouts/Portal.astro";
 import Icon from "../../../../components/portal/Icon.astro";
 import AdminTabs from "../../../../components/portal/AdminTabs.astro";
 import AccessSelect from "../../../../components/portal/AccessSelect.astro";
-import { audit, formatBytes, parseId, subtreeIds, type Folder } from "../../../../lib/portal";
+import { audit, cleanProjectCode, formatBytes, projectCodePath, isUniqueViolation, parseId, subtreeIds, type Folder } from "../../../../lib/portal";
 import { StorageError, deleteStored } from "../../../../lib/storage";
 import { listUsers, permissionMap, readAccessForm, saveAccess } from "../../../../lib/admin";
 import { rawMessage } from "../../../../lib/i18n";
@@ -30,11 +30,22 @@ if (Astro.request.method === "POST") {
 	if (action === "update") {
 		const name = String(form.get("name") ?? "").trim();
 		const description = String(form.get("description") ?? "").trim();
-		if (!name) return Astro.redirect(`${here}?err=invalid`);
-		await DB.batch([
-			DB.prepare("UPDATE folders SET name = ?, description = ? WHERE id = ?").bind(name, description, folder.id),
-			audit(DB, admin.id, "folder_update", name),
-		]);
+		const projectCode = cleanProjectCode(form.get("project_code"));
+		if (!name || (String(form.get("project_code") ?? "").trim() && !projectCode)) return Astro.redirect(`${here}?err=invalid`);
+		try {
+			await DB.batch([
+				DB.prepare("UPDATE folders SET name = ?, description = ?, project_code = ? WHERE id = ?").bind(
+					name,
+					description,
+					projectCode,
+					folder.id,
+				),
+				audit(DB, admin.id, "folder_update", projectCode ? `${name} (${projectCode})` : name),
+			]);
+		} catch (e) {
+			if (isUniqueViolation(e)) return Astro.redirect(`${here}?err=project_code_taken`);
+			throw e;
+		}
 		return Astro.redirect(`${here}?ok=saved`);
 	}
 
@@ -160,6 +171,14 @@ const withAccess = customers.filter((u) => level(u.id) !== "none").length;
 					<input type="hidden" name="action" value="update" />
 					<label>{t("common.folder_name")} <input type="text" name="name" value={folder.name} required /></label>
 					<label>{t("common.description")} <textarea name="description" rows="3">{folder.description}</textarea></label>
+					<label>
+						{t("admin.project_code")}
+						<input type="text" name="project_code" value={folder.project_code ?? ""} maxlength="50" autocomplete="off" spellcheck="false" />
+					</label>
+					<p class="hint">
+						{t("admin.project_code_hint")}
+						{folder.project_code && <><br /><code>{`${Astro.url.origin}/p/${projectCodePath(folder.project_code)}`}</code></>}
+					</p>
 					<div><button type="submit" class="btn">{t("common.save")}</button></div>
 				</form>
 			</div>
