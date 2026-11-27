@@ -55,6 +55,25 @@ async function upgrade(db: D1Database) {
 		),
 	]);
 
+	// Large uploads in progress: an R2 multipart upload, completed into a
+	// files row once every part has arrived.
+	await db.batch([
+		db.prepare(
+			`CREATE TABLE IF NOT EXISTS uploads (
+				id TEXT PRIMARY KEY,
+				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+				r2_key TEXT NOT NULL,
+				upload_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				size INTEGER NOT NULL,
+				content_type TEXT NOT NULL,
+				created_at INTEGER NOT NULL DEFAULT (unixepoch())
+			)`,
+		),
+		db.prepare("CREATE INDEX IF NOT EXISTS idx_uploads_created ON uploads(created_at)"),
+	]);
+
 	// Nested folders: a folder may live inside another one. Permissions are
 	// granted on top-level folders and inherited by everything below them.
 	if (!(await hasColumn(db, "folders", "parent_id"))) {

@@ -2,7 +2,11 @@ import type { SessionUser } from "./auth";
 import { LOCALES, type Lang, type Translate } from "./i18n";
 
 // Workers accept request bodies up to 100 MB on Free/Pro plans; leave room for multipart overhead.
+// This caps a single form post (and every upload when files go to the NAS).
 export const MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
+// Larger files go to R2 in parts (see src/lib/multipart.ts), one request per part.
+export const MAX_FILE_BYTES = 5 * 1024 * 1024 * 1024;
+export const CHUNK_BYTES = 50 * 1024 * 1024;
 
 // Types safe to show in the browser. Everything else is always served as a download.
 export const INLINE_TYPES = new Set([

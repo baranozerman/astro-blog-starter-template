@@ -134,7 +134,7 @@ Cloudflare panelinden ayrıca önerilenler:
 
 ## Sınırlar
 
-- Tek yüklemede toplam en fazla ~95 MB (Cloudflare Workers istek boyutu sınırı).
+- Dosya başına en fazla 5 GB. Cloudflare tek istekte 100 MB'tan büyüğünü kabul etmediği için tarayıcı dosyayı 50 MB'lık parçalar halinde R2'ye gönderir (`src/pages/portal/folders/[id]/upload.ts`, R2 multipart). Yarım kalan yüklemeler 2 gün sonra temizlenir. NAS (WebDAV) açıkken parçalı yükleme kullanılmaz; sınır yine tek seferde ~95 MB'tır.
 
 ## Dosya yapısı
 
