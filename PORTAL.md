@@ -61,6 +61,16 @@ npm run preview
 2. **Yönetim → Yeni kullanıcı**: müşteri hesabı oluşturun; geçici şifre otomatik üretilir, başlangıç klasör erişimleri aynı pencereden seçilir. **Giriş bilgilerini kopyala** ile adres + e-posta + şifreyi panoya alıp müşteriye iletin.
 3. Sonradan değişiklik için **Yönetim → Erişim** matrisini, ya da kullanıcının / klasörün kendi sayfasını kullanın. Alt klasörler ana klasörün iznini devralır.
 
+## Proje Data Book bağlantısı (`/p/<proje kodu>`)
+
+Prodinox ERP'nin final sevk etiketindeki QR kod `https://prodinox.app/p/<proje kodu>` adresini taşır.
+
+- **Yönetim → Klasörler → (ana klasör) → Bilgiler → Proje kodu**: klasöre ERP proje kodunu yazın (yeni ana klasör penceresinde de
+  girilebilir). Bir kod tek klasöre bağlanır; büyük/küçük harf fark etmez.
+- `/p/<kod>` → `/portal/p/<kod>`: oturum yoksa giriş, sonra klasör. Klasör yoksa ya da kullanıcının o ana klasörde izni yoksa aynı
+  "Data Book henüz yayınlanmadı veya erişiminiz yok" sayfası (404) gösterilir; böylece bağlantı hangi projelerin var olduğunu açık etmez.
+- Etiket klasör açılmadan da basılabilir; kod klasöre sonradan yazılınca sahadaki etiketler çalışmaya başlar.
+
 ## Dosyaları kendi NAS'ımızda tutmak (Synology)
 
 `WEBDAV_URL` tanımlıysa yeni yüklenen dosyalar R2 yerine şirket NAS'ına (WebDAV) kaydedilir.

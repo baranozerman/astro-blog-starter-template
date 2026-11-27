@@ -88,6 +88,20 @@ async function upgrade(db: D1Database) {
 			if (!String(e).includes("duplicate column")) throw e;
 		}
 	}
+	// Project code on top-level folders: /p/<code> (QR code on Prodinox ERP shipping
+	// labels) opens the project's Data Book folder. Unique, case-insensitive.
+	if (!(await hasColumn(db, "folders", "project_code"))) {
+		try {
+			await db.prepare("ALTER TABLE folders ADD COLUMN project_code TEXT").run();
+		} catch (e) {
+			if (!String(e).includes("duplicate column")) throw e;
+		}
+	}
+	await db
+		.prepare(
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_project_code ON folders(project_code COLLATE NOCASE) WHERE project_code IS NOT NULL",
+		)
+		.run();
 }
 
 /** Runs pending upgrades once per worker instance. */

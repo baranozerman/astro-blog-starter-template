@@ -48,6 +48,7 @@ export interface RootRow {
 	id: number;
 	name: string;
 	description: string;
+	project_code: string | null;
 	file_count: number;
 	sub_count: number;
 	user_count: number;
@@ -63,7 +64,7 @@ export async function listRoots(db: D1Database) {
 				UNION ALL
 				SELECT tree.root_id, f.id FROM folders f JOIN tree ON f.parent_id = tree.id
 			)
-			SELECT f.id, f.name, f.description,
+			SELECT f.id, f.name, f.description, f.project_code,
 			       (SELECT COUNT(*) FROM files WHERE folder_id IN (SELECT id FROM tree WHERE root_id = f.id)) AS file_count,
 			       (SELECT COALESCE(SUM(size), 0) FROM files WHERE folder_id IN (SELECT id FROM tree WHERE root_id = f.id)) AS bytes,
 			       (SELECT COUNT(*) FROM tree WHERE root_id = f.id) - 1 AS sub_count,

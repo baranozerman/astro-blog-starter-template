@@ -1,0 +1,28 @@
+---
+import Portal from "../../../layouts/Portal.astro";
+import Icon from "../../../components/portal/Icon.astro";
+import { cleanProjectCode, folderByProjectCode, getFolderAccess } from "../../../lib/portal";
+
+export const prerender = false;
+
+const { DB } = Astro.locals.runtime.env;
+const user = Astro.locals.user!;
+const { t } = Astro.locals;
+
+// A Data Book link from a shipping label. Missing folder and missing access get
+// the same answer, so the link does not reveal which projects exist.
+const code = cleanProjectCode(Astro.params.kod);
+const folder = code ? await folderByProjectCode(DB, code) : null;
+const access = folder ? await getFolderAccess(DB, user, folder.id) : null;
+if (folder && access) return Astro.redirect(`/portal/folders/${folder.id}`);
+Astro.response.status = 404;
+---
+
+<Portal title={t("databook.title")}>
+	<div class="panel">
+		<h1>{t("databook.title")}</h1>
+		{code && <p class="muted"><code>{code}</code></p>}
+		<p>{t("databook.unavailable")}</p>
+		<p><a class="btn secondary" href="/portal"><Icon name="folder" size={16} /> {t("databook.back")}</a></p>
+	</div>
+</Portal>
