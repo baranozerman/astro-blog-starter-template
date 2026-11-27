@@ -124,15 +124,20 @@ export function resolveKey(env: Env, storedKey: string) {
 		: { storage: getStorage(env, "r2"), key: storedKey };
 }
 
+/** Key for a new upload: <folder id>/<date>_<short id>_<file name>, prefixed per backend. */
+export function newStoredKey(kind: StorageKind, folderId: number, fileName: string) {
+	const date = new Date().toISOString().slice(0, 10);
+	const path = `${folderId}/${date}_${crypto.randomUUID().slice(0, 8)}_${fileName}`;
+	return kind === "webdav" ? WEBDAV_PREFIX + path : `folders/${path}`;
+}
+
 /**
  * Stores an upload in the active backend and returns the key to save in the database.
  * NAS paths stay readable: <folder id>/<date>_<short id>_<file name>.
  */
 export async function storeUpload(env: Env, folderId: number, fileName: string, file: File, contentType: string) {
 	const kind: StorageKind = env.WEBDAV_URL ? "webdav" : "r2";
-	const date = new Date().toISOString().slice(0, 10);
-	const path = `${folderId}/${date}_${crypto.randomUUID().slice(0, 8)}_${fileName}`;
-	const storedKey = kind === "webdav" ? WEBDAV_PREFIX + path : `folders/${path}`;
+	const storedKey = newStoredKey(kind, folderId, fileName);
 	const { storage, key } = resolveKey(env, storedKey);
 	await storage.put(key, file, contentType);
 	return storedKey;

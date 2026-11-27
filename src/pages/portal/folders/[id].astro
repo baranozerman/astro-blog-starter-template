@@ -3,6 +3,7 @@ import Portal from "../../../layouts/Portal.astro";
 import Icon from "../../../components/portal/Icon.astro";
 import {
 	INLINE_TYPES,
+	MAX_FILE_BYTES,
 	MAX_UPLOAD_BYTES,
 	audit,
 	cleanFileName,
@@ -222,11 +223,18 @@ const { results: files } = await DB.prepare(
 
 const moveTargets = canUpload ? await folderTree(DB, isAdmin ? "all" : [rootId]) : [];
 const maxMb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
+// Files in R2 are sent in parts, so the limit is per file; the NAS takes one request per batch.
+const chunked = !env.WEBDAV_URL;
+const limitText = chunked
+	? t("fm.limit_file", { max: formatBytes(MAX_FILE_BYTES, lang), folder: folder.name })
+	: t("fm.limit", { mb: maxMb, folder: folder.name });
 const currentLabel = t("fm.current");
 // Strings the browser-side script needs.
 const jsText = {
 	filesTotal: rawMessage(lang, "fm.js.files_total"),
 	tooBig: rawMessage(lang, "fm.js.too_big"),
+	fileTooBig: rawMessage(lang, "fm.js.file_too_big"),
+	uploadingN: rawMessage(lang, "fm.js.uploading_n"),
 	uploading: rawMessage(lang, "fm.js.uploading"),
 	processing: rawMessage(lang, "fm.js.processing"),
 	networkError: rawMessage(lang, "fm.js.network_error"),
@@ -292,7 +300,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 							</svg>
 							<span class="ring-pct" id="ring-pct">0%</span>
 						</div>
-						<p class="hint center" id="upload-status">{t("fm.limit", { mb: maxMb, folder: folder.name })}</p>
+						<p class="hint center" id="upload-status">{limitText}</p>
 						<button type="submit" class="btn block" id="upload-btn" disabled>
 							<Icon name="upload" /> {t("fm.upload")}
 						</button>
@@ -502,7 +510,7 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 	</dialog>
 </Portal>
 
-<script define:vars={{ maxBytes: MAX_UPLOAD_BYTES, text: jsText, numberLocale }}>
+<script define:vars={{ maxBytes: MAX_UPLOAD_BYTES, maxFileBytes: MAX_FILE_BYTES, chunked, text: jsText, numberLocale }}>
 	const $ = (id) => document.getElementById(id);
 	const tr = (template, vars) => {
 		const text = template.includes("|") ? template.split("|")[vars.n === 1 ? 0 : 1] : template;
@@ -511,7 +519,9 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 	const fmt = (n) =>
 		n < 1024 * 1024
 			? `${Math.max(1, Math.round(n / 1024))} KB`
-			: `${(n / 1024 / 1024).toLocaleString(numberLocale, { maximumFractionDigits: 1 })} MB`;
+			: n < 1024 * 1024 * 1024
+				? `${(n / 1024 / 1024).toLocaleString(numberLocale, { maximumFractionDigits: 1 })} MB`
+				: `${(n / 1024 / 1024 / 1024).toLocaleString(numberLocale, { maximumFractionDigits: 2 })} GB`;
 
 	// ---------- upload ----------
 	const form = $("upload-form");
@@ -544,11 +554,14 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 				}),
 			);
 			list.hidden = files.length === 0;
-			const tooBig = total > maxBytes;
+			const big = chunked ? files.find((f) => f.size > maxFileBytes) : null;
+			const tooBig = chunked ? Boolean(big) : total > maxBytes;
 			button.disabled = files.length === 0 || tooBig;
-			status.textContent = tooBig
-				? tr(text.tooBig, { size: fmt(total), max: fmt(maxBytes) })
-				: tr(text.filesTotal, { n: files.length, size: fmt(total) });
+			status.textContent = big
+				? tr(text.fileTooBig, { name: big.name, size: fmt(big.size), max: fmt(maxFileBytes) })
+				: tooBig
+					? tr(text.tooBig, { size: fmt(total), max: fmt(maxBytes) })
+					: tr(text.filesTotal, { n: files.length, size: fmt(total) });
 		};
 
 		input.addEventListener("change", showSelection);
@@ -572,9 +585,136 @@ const parent = path.length > 1 ? path[path.length - 2] : null;
 			}
 		});
 
+		const setProgress = (p) => {
+			bar.style.strokeDashoffset = `${circumference * (1 - p)}`;
+			pct.textContent = `${Math.min(100, Math.floor(p * 100))}%`;
+		};
+		const showRing = () => {
+			button.disabled = true;
+			dropzone.hidden = true;
+			list.hidden = true;
+			ring.hidden = false;
+		};
+		const resetForm = (message) => {
+			status.textContent = message;
+			button.disabled = false;
+			ring.hidden = true;
+			dropzone.hidden = false;
+		};
+
+		// ---------- large files: sent to R2 in parts, one request per part ----------
+		const api = (op, query = "") => `${location.pathname.replace(/\/+$/, "")}/upload?op=${op}${query}`;
+		const postJson = async (op, body) => {
+			const res = await fetch(api(op), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data.error || text.networkError);
+			return data;
+		};
+		// One part with byte-level progress; network failures are retried a few times.
+		const sendPart = (id, n, blob, onProgress) =>
+			new Promise((resolve, reject) => {
+				const xhr = new XMLHttpRequest();
+				xhr.open("PUT", api("part", `&id=${encodeURIComponent(id)}&n=${n}`));
+				xhr.setRequestHeader("Content-Type", "application/octet-stream");
+				xhr.upload.addEventListener("progress", (ev) => onProgress(ev.loaded));
+				xhr.addEventListener("load", () => {
+					let data = {};
+					try {
+						data = JSON.parse(xhr.responseText);
+					} catch {}
+					if (xhr.status === 200 && data.etag) resolve({ partNumber: n, etag: data.etag });
+					else reject(Object.assign(new Error(data.error || text.networkError), { status: xhr.status }));
+				});
+				xhr.addEventListener("error", () => reject(new Error(text.networkError)));
+				xhr.send(blob);
+			});
+		const sendPartWithRetry = async (id, n, blob, onProgress) => {
+			for (let attempt = 1; ; attempt++) {
+				try {
+					return await sendPart(id, n, blob, onProgress);
+				} catch (e) {
+					onProgress(0);
+					if (attempt >= 4 || (e.status && e.status < 500)) throw e;
+					await new Promise((r) => setTimeout(r, 1500 * attempt));
+				}
+			}
+		};
+
+		const uploadChunked = async (files) => {
+			const totalBytes = files.reduce((sum, f) => sum + f.size, 0) || 1;
+			let doneBytes = 0;
+			let done = 0;
+			for (const [index, file] of files.entries()) {
+				status.textContent = tr(text.uploadingN, { i: index + 1, n: files.length, name: file.name });
+				let id = null;
+				try {
+					const started = await postJson("start", { name: file.name, size: file.size, type: file.type });
+					id = started.id;
+					const { chunkSize, parts } = started;
+					// Up to three parts in flight at once.
+					const inFlight = new Map();
+					const report = () => {
+						let sum = doneBytes;
+						for (const v of inFlight.values()) sum += v;
+						setProgress(sum / totalBytes);
+					};
+					const results = [];
+					let next = 1;
+					const worker = async () => {
+						while (next <= parts) {
+							const n = next++;
+							const blob = file.slice((n - 1) * chunkSize, Math.min(file.size, n * chunkSize));
+							inFlight.set(n, 0);
+							results.push(
+								await sendPartWithRetry(id, n, blob, (loaded) => {
+									inFlight.set(n, loaded);
+									report();
+								}),
+							);
+							inFlight.delete(n);
+							doneBytes += blob.size;
+							report();
+						}
+					};
+					await Promise.all(Array.from({ length: Math.min(3, parts) }, worker));
+					status.textContent = text.processing;
+					await postJson("complete", { id, parts: results });
+					done++;
+				} catch (e) {
+					if (id) postJson("abort", { id }).catch(() => {});
+					throw Object.assign(e, { done });
+				}
+			}
+		};
+
+		const leaveGuard = (e) => e.preventDefault();
+
 		// Upload with a progress ring; the server's redirect tells us the outcome.
 		form.addEventListener("submit", (e) => {
 			if (!input.files.length) return;
+			if (chunked) {
+				e.preventDefault();
+				const files = [...input.files];
+				showRing();
+				setProgress(0);
+				addEventListener("beforeunload", leaveGuard);
+				uploadChunked(files)
+					.then(() => {
+						removeEventListener("beforeunload", leaveGuard);
+						location.assign(`${location.pathname}?ok=uploaded`);
+					})
+					.catch((err) => {
+						removeEventListener("beforeunload", leaveGuard);
+						// Files finished before the failure are saved; reload so they show up.
+						if (err.done > 0) location.assign(`${location.pathname}?err=upload_partial`);
+						else resetForm(err.message || text.networkError);
+					});
+				return;
+			}
 			e.preventDefault();
 			const xhr = new XMLHttpRequest();
 			xhr.open("POST", location.pathname);
